@@ -10,11 +10,10 @@ import os
 class StickDetect(object):
     """调用compute_StickPosition，计算杆的方位角，距离"""
 
-    def __init__(self):
+    def __init__(self, robotIp, port=9559):
         self.img = None
-        self.topCameraH = None
-        self.topCameraX = None
-        self.topCameraY = None
+        self.robotIp = robotIp
+        self.port = port
 
     # noinspection PyMethodMayBeStatic
     def reshapeStickRect(self, rawRect, numbers):
@@ -157,40 +156,75 @@ class StickDetect(object):
 
         return stick_rectangle
 
+    def takePhoto(self):
+        """
+        拍照
+        :return:numpy array, topCameraX, topCameraY, topCameraHeight
+        """
+        robotIp = self.robotIp
+        port = self.port
+        camProxy = ALProxy("ALVideoDevice", robotIp, port)
+        motionProxy = ALProxy("ALMotion", robotIp, port)
+        camProxy.setActiveCamera(1)
+        resolution = 2  # VGA
+        colorSpace = 11  # RGB
+        topCamera = 0
+        subscriberID = "subscriberID"
+
+        cameraPosition = motionProxy.getPosition("CameraTop", 2, True)
+        subscriberID = camProxy.subscribeCamera(subscriberID, topCamera, resolution, colorSpace, 5)
+        naoImage = camProxy.getImageRemote(subscriberID)
+
+        camProxy.releaseImage(subscriberID)
+        camProxy.unsubscribe(subscriberID)
+        imageWidth = naoImage[0]
+        imageHeight = naoImage[1]
+        array = naoImage[6]
+
+        img = Image.frombytes("RGB", (imageWidth, imageHeight), array)
+
+        cameraX = cameraPosition[0]
+        cameraY = cameraPosition[1]
+        cameraHeight = cameraPosition[2]
+
+        # PIL image 转cv2 image
+        open_cv_image = np.array(img)
+        img = cv2.cvtColor(open_cv_image, cv2.COLOR_RGB2BGR)
+        return img, cameraX, cameraY, cameraHeight
+
     # noinspection PyMethodMayBeStatic
-    def compute_StickPosition(self, img, topCameraH, topCameraX, topCameraY, imageWidth=640, imageHeight=480,
-                              stickH=0.47):
+    def compute_StickPosition(self, stickH=0.47):
         """
         调用此方法，计算杆的方位角，距离
-        :param img:
-        :param topCameraH:topCamera Height
-        :param topCameraX:topCamera Yaw
-        :param topCameraY:topCamera Pitch
-        :param imageWidth: image Width
-        :param imageHeight: image Height
         :param stickH: stick Height
-        :return: stickAngleX, stickDistance
+        :return: stickAngleX, stickDistance, img 标注了黄杆的图片
         """
-        self.topCameraH = topCameraH
-        self.topCameraX = topCameraX
-        self.topCameraY = topCameraY
+        img, cameraX, cameraY, cameraHeight = self.takePhoto()
         self.img = img
+        imageHeight, imageWidth = img.shape
         stick_rect = self.result()
         if len(stick_rect) is not 0:
             sx = stick_rect[0]
             sy = stick_rect[1]
-            sw = stick_rect[2]
+            # sw = stick_rect[2]
             sh = stick_rect[3]
             centerY = sy + sh / 2
             centerX = sx + 0.1 * sh / 2
             # 画出目标
-            cv2.rectangle(self.img, (sx, sy), (sx + sw, sy + sh), (25, 0, 255), 2)
-            cameraAngleX = 60.97 * np.pi / 180
-            cameraAngleY = 47.64 * np.pi / 180
-            stickAngleX = topCameraX + (imageWidth / 2 - centerX) / imageWidth * cameraAngleX
-            stickAngleY = topCameraY + (centerY - imageHeight / 2) / imageHeight * cameraAngleY
-            stickDistance = (topCameraH - stickH / 2) * np.tan(stickAngleY)
+            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (25, 0, 255), 2)
+            cameraX = 60.97 * np.pi / 180
+            cameraY = 47.64 * np.pi / 180
+            stickAngleX = topCameraX + (imageWidth / 2 - centerX) / imageWidth * cameraX
+            stickAngleY = topCameraY + (centerY - imageHeight / 2) / imageHeight * cameraY
+            stickDistance = (cameraHeight - stickH / 2) * np.tan(stickAngleY)
 
-            return stickAngleX, stickDistance
+            return stickAngleX, stickDistance, img
         else:
+            print("no stick")
             return []
+
+
+if __name__ == '__main__':
+    stickDetect = StickDetect("192.168.43.39")
+    stick_angleX, stick_distance, image = stickDetect.compute_StickPosition()
+    cv2.imshow("Stick Detect", image)
