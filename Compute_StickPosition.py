@@ -118,7 +118,7 @@ class StickDetect(object):
     def result(self):
         img = self.img
         Rects = []
-        knn = KNN("data.txt")
+        knn = KNN("data_stick.txt")
         # 返回检测到的矩形矩阵
         # 只需要检测边缘，返回边缘所在的矩阵，返回的轮廓
         rects = self.contoursDetection(self.img)
