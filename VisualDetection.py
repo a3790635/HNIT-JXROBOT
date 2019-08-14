@@ -11,27 +11,50 @@ import time
 
 
 class RedBallDetection(object):
-    def __init__(self):
+    def __init__(self, robotIp, port=9559):
         self.img = None
+        self.robotIp = robotIp
+        self.port = port
 
     # noinspection PyMethodMayBeStatic
     def compute_score(self, rects):
         """计算score"""
+        smin1, vmin1, hmax1, hmin2 = 9, 21, 39, 153
+
+        minHSV1 = np.array([0, smin1, vmin1])
+        maxHSV1 = np.array([hmax1, 255, 255])
+        minHSV2 = np.array([hmin2, smin1, vmin1])
+        maxHSV2 = np.array([180, 255, 255])
+
+        img = self.img.copy
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
         for rect in rects:
-            w, h = rect[2], rect[3]
-            rect.append(int(10000 * abs(float(w) / h - 0.1)))
+            x, y, r = rect
+            H = hsv[x - r:x + r, y - r:y + r, 0]
+            S = hsv[x - r:x + r, y - r:y + r, 1]
+            V = hsv[x - r:x + r, y - r:y + r, 2]
+            H = (np.where(H >= minHSV1[0]) and np.where(H <= maxHSV1[0])) or (
+                    np.where(H >= minHSV2[0]) and np.where(H <= maxHSV2[0]))
+            S = (np.where(S >= minHSV1[1]) and np.where(S <= maxHSV1[1])) or (
+                    np.where(S >= minHSV2[2]) and np.where(S <= maxHSV2[2]))
+            V = (np.where(V >= minHSV1[2]) and np.where(V <= maxHSV1[2])) or (
+                    np.where(V >= minHSV2[2]) and np.where(V <= maxHSV2[2]))
+
+            rect.append(10000 * np.min([len(H), len(S), len(V)]) / float(r ** 2))
         return rects
 
     def nms(self, rects):
         """非极大值抑制"""
         rects = self.compute_score(rects=rects)
         rects.sort(
-            cmp=lambda rects1, rects2: (rects1[4] - rects2[4]))
+            cmp=lambda rects1, rects2: (rects2[3] - rects1[3]))
         return rects[0]
 
     def HoughDetection(self, isShow=False):
         """霍夫圆检测"""
-        binImg = self.preProcess(self.img)
+        img = self.img.copy()
+        binImg = self.preProcess(img)
         circles = cv2.HoughCircles(binImg, cv2.HOUGH_GRADIENT, 1, 100,
                                    param1=150, param2=15, minRadius=2, maxRadius=60)
         if circles is None:
@@ -40,7 +63,7 @@ class RedBallDetection(object):
         else:
             circles = circles[0, :]
             if isShow is True:
-                self.showHoughResult(self.img, circles)
+                self.showHoughResult(img, circles)
         return circles
 
     def preProcess(self, img):
@@ -111,7 +134,7 @@ class RedBallDetection(object):
         return np.round(vector[0], 4)
 
     def result(self):
-        """得到最终结果"""
+        """得到最终结果, 返回圆心，半径"""
         Rects = []
         knn = KNN("data_ball.txt")
         srcImg = self.img.copy()
@@ -146,7 +169,6 @@ class RedBallDetection(object):
 
             if classify == 1:
                 Rects.append(rect_)
-                cv2.rectangle(srcImg, (rect[0], rect[1]), (rect[2], rect[3]), (0, 0, 255), 2)
         Rect = self.nms(Rects)
 
         return Rect
@@ -205,27 +227,30 @@ class RedBallDetection(object):
         """
         motion = ALProxy("ALMotion", self.robotIp, self.port)
         motion.setAngles("HeadPitch", 16 * np.pi / 180, 0.3)
-        time.sleep(1)
+        time.sleep(0.05)
         img, bottomCameraX, bottomCameraY, cameraHeight, cameraAngles = self.takePhoto()
         cameraYaw, cameraPitch = cameraAngles
         self.img = img.copy()
         imageHeight, imageWidth, _ = img.shape
         ball_rect = self.result()
         if len(ball_rect) is not 0:
-            sx = ball_rect[0]
-            sy = ball_rect[1]
-            sw = ball_rect[2]
-            sh = ball_rect[3]
-            centerY = sy + sh / 2
-            centerX = sx + 0.1 * sh / 2
+            centerX = ball_rect[0]
+            centerY = ball_rect[1]
+            r = ball_rect[2]
             # 画出目标
-            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (25, 0, 255), 2)
-            cameraX = 60.97 * np.pi / 180
-            cameraY = 47.64 * np.pi / 180
-            ballAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraX
-            ballAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraY
-            ballDistance = (cameraHeight - ballR / 2.0) / np.tan(ballAngleY)
-            ballDistance = self.distance_fixing(ballDistance)
+            cv2.rectangle(img, (centerX - r, centerY - r), (centerX + r, centerY + r), (0, 0, 255), 2)
+
+            cameraRangeX = 60.97 * np.pi / 180
+            cameraRangeY = 47.64 * np.pi / 180
+
+            ballAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
+            ballAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
+
+            ballDistance = (cameraHeight - ballR) / np.tan(ballAngleY)
+            # ballDistance = self.distance_fixing(ballDistance)
+
+            ballX = bottomCameraX + ballDistance * np.sin(ballAngleX)
+            ballY = bottomCameraY + ballDistance * np.cos(ballAngleX)
 
             return ballX, ballY, ballAngleX, ballDistance, img
         else:
@@ -264,8 +289,8 @@ class StickDetect(object):
 
     # noinspection PyMethodMayBeStatic
     def calHOGFeature(self, img, cellSize):
-        rectstickArea = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        hog = HogFeature(rectstickArea, cellSize)
+        rectStickArea = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        hog = HogFeature(rectStickArea, cellSize)
         vector, _ = hog.hog_extract()
 
         return np.round(vector[0], 4)
@@ -435,7 +460,7 @@ class StickDetect(object):
         """
         motion = ALProxy("ALMotion", self.robotIp, self.port)
         motion.setAngles("HeadPitch", 16 * np.pi / 180, 0.3)
-        time.sleep(1)
+        time.sleep(0.05)
         img, topCameraX, topCameraY, cameraHeight, cameraAngles = self.takePhoto()
         cameraYaw, cameraPitch = cameraAngles
         self.img = img
@@ -449,11 +474,14 @@ class StickDetect(object):
             centerY = sy + sh / 2
             centerX = sx + 0.1 * sh / 2
             # 画出目标
-            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (25, 0, 255), 2)
-            cameraX = 60.97 * np.pi / 180
-            cameraY = 47.64 * np.pi / 180
-            stickAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraX
-            stickAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraY
+            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (0, 0, 255), 2)
+
+            cameraRangeX = 60.97 * np.pi / 180
+            cameraRangeY = 47.64 * np.pi / 180
+
+            stickAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
+            stickAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
+
             stickDistance = (cameraHeight - stickH / 2.0) / np.tan(stickAngleY)
             stickDistance = self.distance_fixing(stickDistance)
 
@@ -461,3 +489,8 @@ class StickDetect(object):
         else:
             print("no stick")
             return []
+
+
+class LandMark(object):
+    def __init__(self):
+        pass
