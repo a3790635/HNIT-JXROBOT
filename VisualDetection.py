@@ -3,14 +3,17 @@ from TargetFeature import HogFeature, ColorFeature
 from Classifier import KNN
 from naoqi import ALProxy
 from PIL import Image
+import almath
 
 import numpy as np
 import cv2
 import os
 import time
+import math
 
 
 class RedBallDetection(object):
+    """调用compute_ballPosition，计算杆的方位角，距离"""
     def __init__(self, robotIp, port=9559):
         self.img = None
         self.robotIp = robotIp
@@ -258,8 +261,8 @@ class RedBallDetection(object):
             return []
 
 
-class StickDetect(object):
-    """调用compute_StickPosition，计算杆的方位角，距离"""
+class StickDetection(object):
+    """调用compute_stickPosition，计算杆的方位角，距离"""
 
     def __init__(self, robotIp, port=9559):
         self.img = None
@@ -452,7 +455,7 @@ class StickDetect(object):
         return fx
 
     # noinspection PyMethodMayBeStatic
-    def compute_StickPosition(self, stickH=0.47):
+    def compute_stickPosition(self, stickH=0.47):
         """
         调用此方法，计算杆的方位角，距离
         :param stickH: stick Height
@@ -491,6 +494,40 @@ class StickDetect(object):
             return []
 
 
-class LandMark(object):
-    def __init__(self):
-        pass
+class LandMarkDetection(object):
+    """调用compute_markPosition,获取LandMark坐标，距离，角度"""
+
+    def __init__(self, robotIp, port=9559):
+        self.robotIp = robotIp
+        self.port = port
+
+    def compute_markPosition(self, landmarkTheoreticalSize=0.11):
+        """
+        调用此函数，获取LandMark坐标，距离，角度
+        :param landmarkTheoreticalSize:LandMark边长
+        :return:landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle
+        """
+        currentCamera = "CameraTop"
+        memoryProxy = ALProxy("ALMemory", self.robotIp, self.port)
+        landmarkProxy = ALProxy("ALLandMarkDetection", self.robotIp, self.port)
+        landmarkProxy.subscribe("landmark")
+        markData = memoryProxy.getData("LandmarkDetected")
+        while markData is None or len(markData) == 0:
+            markData = memoryProxy.getData("LandmarkDetected")
+            print("No mark")
+        wzCamera = markData[1][0][0][1]
+        wyCamera = markData[1][0][0][2]
+        angularSize = markData[1][0][0][3]
+        distanceFromCameraToLandmark = landmarkTheoreticalSize / (2 * math.tan(angularSize / 2))
+        motionProxy = ALProxy("ALMotion", IP, 9559)
+        transform = motionProxy.getTransform(currentCamera, 2, True)
+        transformList = almath.vectorFloat(transform)
+        robotToCamera = almath.Transform(transformList)
+        cameraToLandmarkRotationTransform = almath.Transform_from3DRotation(0, wyCamera, wzCamera)
+        cameraToLandmarkTranslationTransform = almath.Transform(distanceFromCameraToLandmark, 0, 0)
+        robotToLandmark = robotToCamera * cameraToLandmarkRotationTransform * cameraToLandmarkTranslationTransform
+        landMarkX = robotToLandmark.r1_c4
+        landMarkY = robotToLandmark.r2_c4
+        landmarkProxy.unsubscribe("landmark")
+        yawAngle = math.atan2(landMarkY, landMarkX)
+        return landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle
