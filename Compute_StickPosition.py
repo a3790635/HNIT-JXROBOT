@@ -1,17 +1,18 @@
 # coding=utf-8
-from TargetFeature import HogFeature, ColorFeature
-from Classifier import KNN
-from naoqi import ALProxy
-from PIL import Image
-
 import numpy as np
 import cv2
 import os
 import time
+import math
+from TargetFeature import HogFeature, ColorFeature
+from Classifier import KNN
+from naoqi import ALProxy
+from PIL import Image
+import almath
 
 
-class StickDetect(object):
-    """调用compute_StickPosition，计算杆的方位角，距离"""
+class RedBallDetection(object):
+    """调用compute_ballPosition，计算杆的方位角，距离"""
 
     def __init__(self, robotIp, port=9559):
         self.img = None
@@ -19,7 +20,259 @@ class StickDetect(object):
         self.port = port
 
     # noinspection PyMethodMayBeStatic
-    def reshapeStickRect(self, rawRect, numbers):
+    def __compute_score(self, rects):
+        """计算score"""
+        smin1, vmin1, hmax1, hmin2 = 9, 21, 39, 153
+
+        minHSV1 = np.array([0, smin1, vmin1])
+        maxHSV1 = np.array([hmax1, 255, 255])
+        minHSV2 = np.array([hmin2, smin1, vmin1])
+        maxHSV2 = np.array([180, 255, 255])
+
+        img = self.img.copy()
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        for rect in rects:
+            x, y, r = int(rect[0]), int(rect[1]), int(rect[2])
+            H = hsv[y - r:y + r, x - r:x + r, 0]
+            S = hsv[y - r:y + r, x - r:x + r, 1]
+            V = hsv[y - r:y + r, x - r:x + r, 2]
+            H = (np.where(H >= minHSV1[0]) and np.where(H <= maxHSV1[0])) or (
+                    np.where(H >= minHSV2[0]) and np.where(H <= maxHSV2[0]))
+            S = (np.where(S >= minHSV1[1]) and np.where(S <= maxHSV1[1])) or (
+                    np.where(S >= minHSV2[2]) and np.where(S <= maxHSV2[2]))
+            V = (np.where(V >= minHSV1[2]) and np.where(V <= maxHSV1[2])) or (
+                    np.where(V >= minHSV2[2]) and np.where(V <= maxHSV2[2]))
+
+            rect.append(10000 * np.min([len(H), len(S), len(V)]) / float(r ** 2))
+        return rects
+
+    def __nms(self, rects):
+        """非极大值抑制"""
+        rects = self.__compute_score(rects=rects)
+        rects.sort(
+            cmp=lambda rects1, rects2: (rects2[3] - rects1[3]))
+        return rects[0]
+
+    def __HoughDetection(self, isShow=False):
+        """霍夫圆检测"""
+        img = self.img.copy()
+        binImg = self.__preProcess(img)
+        circles = cv2.HoughCircles(binImg, cv2.HOUGH_GRADIENT, 1, 100,
+                                   param1=150, param2=30, minRadius=8, maxRadius=60)
+        if circles is None:
+            circles = []
+            # print("no circle")
+        else:
+            circles = circles[0, :]
+            if isShow is True:
+                self.showHoughResult(img, circles)
+        return circles
+
+    def __preProcess(self, img):
+        """图像处理"""
+        HSVImg = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        smin1, vmin1, hmax1, hmin2 = 9, 21, 39, 153
+
+        minHSV1 = np.array([0, smin1, vmin1])
+        maxHSV1 = np.array([hmax1, 255, 255])
+        minHSV2 = np.array([hmin2, smin1, vmin1])
+        maxHSV2 = np.array([180, 255, 255])
+
+        # 二值化处理
+        binImg1 = cv2.inRange(HSVImg, minHSV1, maxHSV1)
+        binImg2 = cv2.inRange(HSVImg, minHSV2, maxHSV2)
+        binImg = np.maximum(binImg1, binImg2)
+
+        # 图像滤波处理（腐蚀，膨胀，高斯）
+        binImg = self.__filter(binImg)
+        return binImg
+
+    # noinspection PyMethodMayBeStatic
+    def __filter(self, img):
+        """滤波"""
+        kernelErosion = np.ones((3, 3), np.uint8)
+        kernelDilation = np.ones((3, 3), np.uint8)
+        resImg = cv2.erode(img, kernelErosion, iterations=2)
+        resImg = cv2.dilate(resImg, kernelDilation, iterations=3)
+        resImg = cv2.GaussianBlur(resImg, (9, 9), 1.5)
+
+        return resImg
+
+    # noinspection PyMethodMayBeStatic
+    def __reshapeBallRect(self, rawRect, numbers):
+        newRect = np.zeros((numbers, 4))
+        initX, initY, endX, endY = rawRect[0], rawRect[1], rawRect[2], rawRect[3]  # 初始化参数
+
+        newRect[0] = [initX, initY, initX + (endX - initX) / 2, initY + (endY - initY) / 2]
+        newRect[1] = [initX + (endX - initX) / 2, initY, endX, initY + (endY - initY) / 2]
+        newRect[2] = [initX, initY + (endY - initY) / 2, initX + (endX - initX) / 2, endY]
+        newRect[3] = [initX + (endX - initX) / 2, initY + (endY - initY) / 2, endX, endY]
+
+        return newRect
+
+    # noinspection PyMethodMayBeStatic
+    def __circle2Rect(self, circle, k=1):
+        """转化球在图像中的矩形坐标"""
+        centerX, centerY, radius = circle[0], circle[1], circle[2]
+        initX, initY = int(centerX - int(k * radius)), int(centerY - int(k * radius))
+        endX, endY = int(centerX + int(k * radius)), int(centerY + int(k * radius))
+
+        return [initX, initY, endX, endY]
+
+    # noinspection PyMethodMayBeStatic
+    def __calColorFeature(self, img, number=16):
+        """提取颜色特征"""
+        color = ColorFeature(img, number)
+        result = color.colorExtract(img)
+
+        return np.round(result, 4)
+
+    # noinspection PyMethodMayBeStatic
+    def __calHOGFeature(self, img, cell_size):
+        """提取HOG特征"""
+        rectBallArea = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        hog = HogFeature(rectBallArea, cell_size)
+        vector, img = hog.hog_extract()
+        return np.round(vector[0], 4)
+
+    def __result(self):
+        """得到最终结果, 返回圆心，半径"""
+        Rects = []
+        knn = KNN("data_ball.txt")
+        srcImg = self.img.copy()
+        rects = self.__HoughDetection()
+        if len(rects) is 0:
+            # print("no rects")
+            return []
+
+        for rect in rects:  # 检测每个轮廓
+            resultTotal = []
+            x, y, r = rect[:3]
+            rect_ = [x, y, r]
+            rect = self.__circle2Rect(rect)
+            if rect[0] < 0 or rect[1] < 0 or rect[2] > 640 or rect[3] > 480:
+                print("out of bound")
+                continue
+            newRects = self.__reshapeBallRect(rect, 4)
+
+            for newRect in newRects:
+                newInitX, newInitY = int(newRect[0]), int(newRect[1])
+                newEndX, newEndY = int(newRect[2]), int(newRect[3])
+                rectBallArea = srcImg[newInitY:newEndY, newInitX:newEndX, :]
+
+                resultColor = self.__calColorFeature(rectBallArea, 16)
+                cellSize = min(newEndX - newInitX, newEndY - newInitY)
+                resultHOG = self.__calHOGFeature(rectBallArea, cellSize / 2)
+                resultTotal.extend(resultColor)
+                resultTotal.extend(resultHOG)
+
+            resultTotal = np.array(resultTotal).reshape(1, -1).astype('float64')
+            classify = knn.classifyVector(resultTotal)
+
+            if classify == 1:
+                Rects.append(rect_)
+        if len(Rects) is 0:
+            return []
+        Rect = self.__nms(Rects)
+
+        return Rect
+
+    def __takePhoto(self):
+        """
+        拍照
+        :return:numpy array, toptopCameraX, topCameraY, topCameraHeight
+        """
+        robotIp = self.robotIp
+        port = self.port
+        camProxy = ALProxy("ALVideoDevice", robotIp, port)
+        motionProxy = ALProxy("ALMotion", robotIp, port)
+        camProxy.setActiveCamera(1)
+        resolution = 2  # VGA
+        colorSpace = 11  # RGB
+        bottomCamera = 1
+        subscriberID = "subscriberID"
+
+        cameraPosition = motionProxy.getPosition("CameraBottom", 2, True)
+        cameraAngles = motionProxy.getAngles("Head", True)
+        subscriberID = camProxy.subscribeCamera(subscriberID, bottomCamera, resolution, colorSpace, 5)
+        naoImage = camProxy.getImageRemote(subscriberID)
+
+        camProxy.releaseImage(subscriberID)
+        camProxy.unsubscribe(subscriberID)
+        imageWidth = naoImage[0]
+        imageHeight = naoImage[1]
+        array = naoImage[6]
+
+        img = Image.frombytes("RGB", (imageWidth, imageHeight), array)
+
+        bottomCameraX = cameraPosition[0]
+        bottomCameraY = cameraPosition[1]
+        cameraHeight = cameraPosition[2]
+
+        # PIL image 转cv2 image
+        open_cv_image = np.array(img)
+        img = cv2.cvtColor(open_cv_image, cv2.COLOR_RGB2BGR)
+        # cv2.imwrite('ballTest.jpg', img)
+        return img, bottomCameraX, bottomCameraY, cameraHeight, cameraAngles
+
+    # noinspection PyMethodMayBeStatic
+    def __distance_fixing(self, ballDistance):
+        x = ballDistance
+        a = -0.3165899349995387
+        b = 1.150241967154712
+        fx = (x - a) / b
+        return fx
+
+    # noinspection PyMethodMayBeStatic
+    def compute_ballPosition(self, ballR=0.021):
+        """
+        调用此方法，获取红球的坐标，方位角，距离
+        :param ballR: ball Height
+        :return: centerX at img, centerY at img, r at img, ballX, ballY, ballAngleX, ballDistance, img 标注了红球的图片
+        """
+        time.sleep(0.05)
+        img, bottomCameraX, bottomCameraY, cameraHeight, cameraAngles = self.__takePhoto()
+        print(img.shape)
+        cameraYaw, cameraPitch = cameraAngles
+        self.img = img.copy()
+        imageHeight, imageWidth, _ = img.shape
+        ball_rect = self.__result()
+        if len(ball_rect) is not 0:
+            centerX = ball_rect[0]
+            centerY = ball_rect[1]
+            r = ball_rect[2]
+            # 画出目标
+            cv2.rectangle(img, (centerX - r, centerY - r), (centerX + r, centerY + r), (0, 0, 255), 2)
+
+            cameraRangeX = 60.97 * np.pi / 180
+            cameraRangeY = 47.64 * np.pi / 180
+
+            ballAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
+            ballAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
+
+            ballDistance = (cameraHeight - ballR) / np.tan(ballAngleY)
+            # ballDistance = self.__distance_fixing(ballDistance)
+
+            ballX = bottomCameraX + ballDistance * np.sin(ballAngleX)
+            ballY = bottomCameraY + ballDistance * np.cos(ballAngleX)
+
+            return [centerX, centerY, r, ballX, ballY, ballAngleX, ballDistance, img]
+        else:
+            print("no ball")
+            return []
+
+
+class StickDetection(object):
+    """调用compute_stickPosition，计算杆的方位角，距离"""
+
+    def __init__(self, robotIp, port=9559):
+        self.img = None
+        self.robotIp = robotIp
+        self.port = port
+
+    # noinspection PyMethodMayBeStatic
+    def __reshapeStickRect(self, rawRect, numbers):
         newRect = np.zeros((numbers, 4))
         initX, initY, endX, endY = rawRect[0], rawRect[1], rawRect[2], rawRect[3]  # 初始化参数
 
@@ -33,28 +286,28 @@ class StickDetect(object):
         return newRect  # 四等分矩阵信息
 
     # noinspection PyMethodMayBeStatic
-    def calColorFeature(self, img, number=16):
+    def __calColorFeature(self, img, number=16):
         color = ColorFeature(img, number)
         result = color.colorExtract(img)
 
         return np.round(result, 4)
 
     # noinspection PyMethodMayBeStatic
-    def calHOGFeature(self, img, cellSize):
-        rectstickArea = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        hog = HogFeature(rectstickArea, cellSize)
+    def __calHOGFeature(self, img, cellSize):
+        rectStickArea = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        hog = HogFeature(rectStickArea, cellSize)
         vector, _ = hog.hog_extract()
 
         return np.round(vector[0], 4)
 
     # noinspection PyMethodMayBeStatic
-    def bilateralFilter(self, img):
+    def __bilateral__filter(self, img):
         """双边滤波"""
         bilateral = cv2.bilateralFilter(img, 25, 12.5, 50)
         return bilateral
 
     # noinspection PyMethodMayBeStatic
-    def Filter(self, binImg):
+    def __filter(self, binImg):
         """
         腐蚀，膨胀，高斯滤波
         :param binImg:二值图
@@ -74,7 +327,7 @@ class StickDetect(object):
         minArea = 850
 
         # 预处理
-        bilateral = self.bilateralFilter(img)
+        bilateral = self.__bilateral__filter(img)
         HSVImg = cv2.cvtColor(bilateral, cv2.COLOR_BGR2HSV)  # 转到HSV空间
         hmin, hmax, smin, vmin = 27, 45, 55, 115
         # 二值化处理
@@ -83,7 +336,7 @@ class StickDetect(object):
         binImg = cv2.inRange(HSVImg, minHSV, maxHSV)
 
         # 图像滤波处理（腐蚀，膨胀，高斯）
-        frameBin = self.Filter(binImg)
+        frameBin = self.__filter(binImg)
 
         rects = []
         if cv2.__version__.split(".")[0] == "3":  # for OpenCV >= 3.0.0
@@ -101,21 +354,21 @@ class StickDetect(object):
         return rects
 
     # noinspection PyMethodMayBeStatic
-    def compute_score(self, rects):
+    def __compute_score(self, rects):
         """计算score"""
         for rect in rects:
             w, h = rect[2], rect[3]
             rect.append(int(10000 * abs(float(w) / h - 0.1)))
         return rects
 
-    def nms(self, rects):
+    def __nms(self, rects):
         """非极大值抑制"""
-        rects = self.compute_score(rects=rects)
+        rects = self.__compute_score(rects=rects)
         rects.sort(
             cmp=lambda rects1, rects2: (rects1[4] - rects2[4]))
         return rects[0]
 
-    def result(self):
+    def __result(self):
         img = self.img
         Rects = []
         knn = KNN("data_stick.txt")
@@ -124,7 +377,7 @@ class StickDetect(object):
         rects = self.contoursDetection(self.img)
 
         if len(rects) == 0:
-            print("no rects")
+            # print("no rects")
             return []
 
         for rect in rects:
@@ -135,16 +388,16 @@ class StickDetect(object):
                 continue
             rect[2] += rect[0]
             rect[3] += rect[1]
-            newRects = self.reshapeStickRect(rect, 4)
+            newRects = self.__reshapeStickRect(rect, 4)
 
             for newRect in newRects:
                 newInitX, newInitY = int(newRect[0]), int(newRect[1])
                 newEndX, newEndY = int(newRect[2]), int(newRect[3])
                 rectStickArea = img[newInitY:newEndY, newInitX:newEndX, :]
 
-                resultColor = self.calColorFeature(rectStickArea, 16)
+                resultColor = self.__calColorFeature(rectStickArea, 16)
                 cellSize = min(newEndX - newInitX, newEndY - newInitY)
-                resultHOG = self.calHOGFeature(rectStickArea, cellSize / 2)
+                resultHOG = self.__calHOGFeature(rectStickArea, cellSize / 2)
                 resultTotal.extend(resultColor)
                 resultTotal.extend(resultHOG)
 
@@ -154,11 +407,11 @@ class StickDetect(object):
             if classify == 1:
                 Rects.append(rect_)
 
-        stick_rectangle = self.nms(Rects)  # 非极大值抑制
+        stick_rectangle = self.__nms(Rects)  # 非极大值抑制
 
         return stick_rectangle
 
-    def takePhoto(self):
+    def __takePhoto(self):
         """
         拍照
         :return:numpy array, toptopCameraX, topCameraY, topCameraHeight
@@ -196,8 +449,7 @@ class StickDetect(object):
         return img, topCameraX, topCameraY, cameraHeight, cameraAngles
 
     # noinspection PyMethodMayBeStatic
-    def distance_fixing(self, stickDistance):
-        """误差补偿"""
+    def __distance_fixing(self, stickDistance):
         x = stickDistance
         a = -0.3165899349995387
         b = 1.150241967154712
@@ -205,20 +457,18 @@ class StickDetect(object):
         return fx
 
     # noinspection PyMethodMayBeStatic
-    def compute_StickPosition(self, stickH=0.47):
+    def compute_stickPosition(self, stickH=0.47):
         """
         调用此方法，计算杆的方位角，距离
         :param stickH: stick Height
         :return: stickAngleX, stickDistance, img 标注了黄杆的图片
         """
-        motion = ALProxy("ALMotion", self.robotIp, self.port)
-        motion.setAngles("HeadPitch", 16 * np.pi / 180, 0.3)
-        time.sleep(1)
-        img, topCameraX, topCameraY, cameraHeight, cameraAngles = self.takePhoto()
+        time.sleep(0.05)
+        img, topCameraX, topCameraY, cameraHeight, cameraAngles = self.__takePhoto()
         cameraYaw, cameraPitch = cameraAngles
         self.img = img
         imageHeight, imageWidth, _ = img.shape
-        stick_rect = self.result()
+        stick_rect = self.__result()
         if len(stick_rect) is not 0:
             sx = stick_rect[0]
             sy = stick_rect[1]
@@ -227,17 +477,70 @@ class StickDetect(object):
             centerY = sy + sh / 2
             centerX = sx + 0.1 * sh / 2
             # 画出目标
-            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (25, 0, 255), 2)
-            cameraX = 60.97 * np.pi / 180
-            cameraY = 47.64 * np.pi / 180
-            stickAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraX
-            stickAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraY
-            print("stickAngleY: {}".format(stickAngleY))
+            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (0, 0, 255), 2)
+
+            cameraRangeX = 60.97 * np.pi / 180
+            cameraRangeY = 47.64 * np.pi / 180
+
+            stickAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
+            stickAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
+
             stickDistance = (cameraHeight - stickH / 2.0) / np.tan(stickAngleY)
-            print("stickDistance: {}".format(stickDistance))
-            stickDistance = self.distance_fixing(stickDistance)
+            stickDistance = self.__distance_fixing(stickDistance)
 
             return stickAngleX, stickDistance, img
         else:
             print("no stick")
             return []
+
+
+class LandMarkDetection(object):
+    """调用compute_markPosition,获取LandMark坐标，距离，角度"""
+
+    def __init__(self, robotIp, port=9559):
+        self.robotIp = robotIp
+        self.port = port
+
+    def compute_markPosition(self, landmarkTheoreticalSize=0.11):
+        """
+        调用此函数，获取LandMark坐标，距离，角度
+        :param landmarkTheoreticalSize:LandMark边长
+        :return:landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle
+        """
+        currentCamera = "CameraTop"
+        memoryProxy = ALProxy("ALMemory", self.robotIp, self.port)
+        landmarkProxy = ALProxy("ALLandMarkDetection", self.robotIp, self.port)
+        landmarkProxy.subscribe("landmark")
+        markData = memoryProxy.getData("LandmarkDetected")
+        while markData is None or len(markData) == 0:
+            markData = memoryProxy.getData("LandmarkDetected")
+            print("No mark")
+        wzCamera = markData[1][0][0][1]
+        wyCamera = markData[1][0][0][2]
+        angularSize = markData[1][0][0][3]
+        distanceFromCameraToLandmark = landmarkTheoreticalSize / (2 * math.tan(angularSize / 2))
+        motionProxy = ALProxy("ALMotion", IP, 9559)
+        transform = motionProxy.getTransform(currentCamera, 2, True)
+        transformList = almath.vectorFloat(transform)
+        robotToCamera = almath.Transform(transformList)
+        cameraToLandmarkRotationTransform = almath.Transform_from3DRotation(0, wyCamera, wzCamera)
+        cameraToLandmarkTranslationTransform = almath.Transform(distanceFromCameraToLandmark, 0, 0)
+        robotToLandmark = robotToCamera * cameraToLandmarkRotationTransform * cameraToLandmarkTranslationTransform
+        landMarkX = robotToLandmark.r1_c4
+        landMarkY = robotToLandmark.r2_c4
+        landmarkProxy.unsubscribe("landmark")
+        yawAngle = math.atan2(landMarkY, landMarkX)
+        return landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle
+
+
+if __name__ == '__main__':
+    # s_time = time.time()
+    # stick = StickDetection("192.168.43.39")
+    # stickInfo = stick.compute_stickPosition()
+    # print(stickInfo)
+    for ii in range(20):
+        s_time = time.time()
+        redBall = RedBallDetection("192.168.43.39")
+        redBallInfo = redBall.compute_ballPosition()
+        print(redBallInfo)
+        print(time.time() - s_time)
