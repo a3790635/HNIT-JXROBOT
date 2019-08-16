@@ -469,7 +469,7 @@ class StickDetection(object):
         return fx
 
     # noinspection PyMethodMayBeStatic
-    def compute_stickPosition1(self, stickH=0.47):
+    def compute_stickPosition(self, stickH=0.47):
         """
         调用此方法，计算杆的方位角，距离
         :param stickH: stick Height
@@ -504,57 +504,6 @@ class StickDetection(object):
         else:
             print("no stick")
             return []
-
-    def compute_stickPosition(self, standState="standInit", stickH=0.47):
-        """
-        调用此方法，计算杆的方位角，距离
-        :param standState:stand State
-        :param stickH: stick height
-        :return:[stickX, stickY, stickYaw, stickDistance, img]
-        """
-        motionProxy = ALProxy("ALMotion", self.robotIp, self.port)
-        img, cameraX, cameraY, cameraHeight, cameraAngles = self.__takePhoto()
-        self.img = img.copy()
-        imageHeight, imageWidth, _ = img.shape
-        stick_rect = self.__result()
-
-        cameraYawRange = 60.97 * np.pi / 180
-        cameraPitchRange = 47.64 * np.pi / 180
-
-        if len(stick_rect) is not 0:
-            sx = stick_rect[0]
-            sy = stick_rect[1]
-            sw = stick_rect[2]
-            sh = stick_rect[3]
-            centerY = sy + sh / 2
-            centerX = sx + 0.1 * sh / 2
-            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (0, 0, 255), 2)
-
-            topCameraDirection = {"standInit": 49.2, "standUp": 39.7}
-            try:
-                cameraDirection = topCameraDirection[standState]
-            except KeyError:
-                print("Error! unknown standState, please check the value of stand state!")
-            else:
-                headPitches = motionProxy.getAngles("HeadPitch", True)
-                headPitch = headPitches[0]
-                headYaws = motionProxy.getAngles("HeadYaw", True)
-                headYaw = headYaws[0]
-                stickPitch = (centerY - imageHeight / 2) * cameraPitchRange / 480.0  # y (pitch angle)
-                stickYaw = (imageWidth / 2 - centerX) * cameraYawRange / 640.0  # x (yaw angle)
-                dPitch = (cameraHeight - stickH / 2) / np.tan(cameraDirection / 180 * np.pi + headPitch + stickPitch)
-                dYaw = dPitch / np.cos(stickYaw)
-                stickX = dYaw * np.cos(stickYaw + headYaw) + cameraX
-                stickY = dYaw * np.sin(stickYaw + headYaw) + cameraY
-                stickYaw = np.arctan2(stickY, stickX)
-                if standState == "standInit":
-                    ky = 42.513 * stickX ** 4 - 109.66 * stickX ** 3 + 104.2 * stickX ** 2 - 44.218 * stickX + 8.5526
-                    # ky = 12.604*stickX**4 - 37.962*stickX**3 + 43.163*stickX**2 - 22.688*stickX + 6.0526
-                    stickY = ky * stickY
-                    stickYaw = np.arctan2(stickY, stickX)
-                stickDistance = np.sqrt(stickX ** 2 + stickY ** 2)
-                return [stickX, stickY, stickYaw, stickDistance, img]
-        return []
 
 
 class LandMarkDetection(object):
