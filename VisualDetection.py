@@ -53,7 +53,7 @@ class RedBallDetection(object):
             cmp=lambda rects1, rects2: (rects2[3] - rects1[3]))
         return rects[0]
 
-    def __HoughDetection(self, isShow=False):
+    def __HoughDetection(self):
         """霍夫圆检测"""
         img = self.img.copy()
         binImg = self.__preProcess(img)
@@ -64,8 +64,6 @@ class RedBallDetection(object):
             # print("no circle")
         else:
             circles = circles[0, :]
-            if isShow is True:
-                self.showHoughResult(img, circles)
         return circles
 
     def __preProcess(self, img):
@@ -147,6 +145,12 @@ class RedBallDetection(object):
         for rect in rects:  # 检测每个轮廓
             resultTotal = []
             x, y, r = rect[:3]
+
+            # cv2.rectangle(srcImg, (x - r, y - r), (x + r, y + r), (0, 0, 255), 2)
+            # cv2.imshow("img", srcImg)
+            # cv2.waitKey(0)
+            # cv2.destroyAllWindows()
+
             rect_ = [x, y, r]
             rect = self.__circle2Rect(rect)
             if rect[0] < 0 or rect[1] < 0 or rect[2] > 640 or rect[3] > 480:
@@ -222,43 +226,53 @@ class RedBallDetection(object):
         fx = (x - a) / b
         return fx
 
-    # noinspection PyMethodMayBeStatic
-    def compute_ballPosition(self, ballR=0.021):
+    def compute_ballPosition(self, standState="standInit", ballRadius=0.021):
         """
-        调用此方法，获取红球的坐标，方位角，距离
-        :param ballR: ball Height
-        :return: centerX at img, centerY at img, r at img, ballX, ballY, ballAngleX, ballDistance, img 标注了红球的图片
+        调用此方法，计算球的在图片中的圆心，半径，实际坐标、方位角、距离
+        :param standState:stand State
+        :param ballRadius:ball Radius
+        :return:[centerX at img, centerY at img, radius at img, ballX, ballY, ballYaw, img]
         """
-        time.sleep(0.05)
-        img, bottomCameraX, bottomCameraY, cameraHeight, cameraAngles = self.__takePhoto()
-        print(img.shape)
-        cameraYaw, cameraPitch = cameraAngles
+        motionProxy = ALProxy("ALMotion", self.robotIp, self.port)
+        img, cameraX, cameraY, cameraHeight, cameraAngles = self.__takePhoto()
         self.img = img.copy()
         imageHeight, imageWidth, _ = img.shape
         ball_rect = self.__result()
+
+        cameraYawRange = 60.97 * np.pi / 180
+        cameraPitchRange = 47.64 * np.pi / 180
+
         if len(ball_rect) is not 0:
             centerX = ball_rect[0]
             centerY = ball_rect[1]
-            r = ball_rect[2]
-            # 画出目标
-            cv2.rectangle(img, (centerX - r, centerY - r), (centerX + r, centerY + r), (0, 0, 255), 2)
+            radius = ball_rect[2]
+            cv2.rectangle(img, (centerX - radius, centerY - radius), (centerX + radius, centerY + radius), (0, 0, 255),
+                          2)
 
-            cameraRangeX = 60.97 * np.pi / 180
-            cameraRangeY = 47.64 * np.pi / 180
-
-            ballAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
-            ballAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
-
-            ballDistance = (cameraHeight - ballR) / np.tan(ballAngleY)
-            # ballDistance = self.__distance_fixing(ballDistance)
-
-            ballX = bottomCameraX + ballDistance * np.sin(ballAngleX)
-            ballY = bottomCameraY + ballDistance * np.cos(ballAngleX)
-
-            return [centerX, centerY, r, ballX, ballY, ballAngleX, ballDistance, img]
-        else:
-            print("no ball")
-            return []
+            bottomCameraDirection = {"standInit": 49.2, "standUp": 39.7}
+            try:
+                cameraDirection = bottomCameraDirection[standState]
+            except KeyError:
+                print("Error! unknown standState, please check the value of stand state!")
+            else:
+                headPitches = motionProxy.getAngles("HeadPitch", True)
+                headPitch = headPitches[0]
+                headYaws = motionProxy.getAngles("HeadYaw", True)
+                headYaw = headYaws[0]
+                ballPitch = (centerY - imageHeight / 2) * cameraPitchRange / 480.0  # y (pitch angle)
+                ballYaw = (imageWidth / 2 - centerX) * cameraYawRange / 640.0  # x (yaw angle)
+                dPitch = (cameraHeight - ballRadius) / np.tan(cameraDirection / 180 * np.pi + headPitch + ballPitch)
+                dYaw = dPitch / np.cos(ballYaw)
+                ballX = dYaw * np.cos(ballYaw + headYaw) + cameraX + 0.035
+                ballY = dYaw * np.sin(ballYaw + headYaw) + cameraY
+                ballYaw = np.arctan2(ballY, ballX)
+                if standState == "standInit":
+                    ky = 42.513 * ballX ** 4 - 109.66 * ballX ** 3 + 104.2 * ballX ** 2 - 44.218 * ballX + 8.5526
+                    # ky = 12.604*ballX**4 - 37.962*ballX**3 + 43.163*ballX**2 - 22.688*ballX + 6.0526
+                    ballY = ky * ballY
+                    ballYaw = np.arctan2(ballY, ballX)
+                return [centerX, centerY, radius, ballX, ballY, ballYaw, img]
+        return []
 
 
 class StickDetection(object):
@@ -319,7 +333,7 @@ class StickDetection(object):
 
         return frameBin
 
-    def contoursDetection(self, img):  # 检测图像边界
+    def __contoursDetection(self, img):  # 检测图像边界
 
         minPerimeter = 100
         minArea = 850
@@ -372,7 +386,7 @@ class StickDetection(object):
         knn = KNN("data_stick.txt")
         # 返回检测到的矩形矩阵
         # 只需要检测边缘，返回边缘所在的矩阵，返回的轮廓
-        rects = self.contoursDetection(self.img)
+        rects = self.__contoursDetection(self.img)
 
         if len(rects) == 0:
             # print("no rects")
@@ -528,17 +542,20 @@ class LandMarkDetection(object):
         landMarkY = robotToLandmark.r2_c4
         landmarkProxy.unsubscribe("landmark")
         yawAngle = math.atan2(landMarkY, landMarkX)
-        return landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle
+        return [landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle]
 
 
 if __name__ == '__main__':
-    # s_time = time.time()
-    # stick = StickDetection("192.168.43.39")
-    # stickInfo = stick.compute_stickPosition()
-    # print(stickInfo)
-    for ii in range(20):
+    for ii in range(100):
         s_time = time.time()
-        redBall = RedBallDetection("192.168.43.39")
-        redBallInfo = redBall.compute_ballPosition()
-        print(redBallInfo)
+        YellowStick = StickDetection("192.168.43.165")
+        stickInfo = YellowStick.compute_stickPosition1()
+        if len(stickInfo) is not 0:
+            stickImg = stickInfo[2]
+            cv2.imshow("YellowStick", stickImg)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+            print(stickInfo[0:2])
+        else:
+            print("no stick")
         print(time.time() - s_time)
