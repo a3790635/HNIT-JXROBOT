@@ -135,7 +135,7 @@ class RedBallDetection(object):
     def __result(self):
         """得到最终结果, 返回圆心，半径"""
         Rects = []
-        knn = KNN("data_ball1.txt")
+        knn = KNN("data_ball.txt")
         srcImg = self.img.copy()
         rects = self.__HoughDetection()
         if len(rects) is 0:
