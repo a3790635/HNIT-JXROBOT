@@ -4,20 +4,82 @@ import cv2
 import os
 import time
 import math
+import almath
 from TargetFeature import HogFeature, ColorFeature
 from Classifier import KNN
 from naoqi import ALProxy
-from PIL import Image
-import almath
+from functools import cmp_to_key
+from datetime import datetime
+import vision_definitions as vd
 
 
-class RedBallDetection(object):
-    """调用compute_ballPosition，计算杆的方位角，距离"""
+class VisualBasis(object):
+    """
+    a basic class for visual task.
+    """
 
-    def __init__(self, robotIp, port=9559):
-        self.img = None
-        self.robotIp = robotIp
-        self.port = port
+    def __init__(self, robotIp, port=9559, cameraId=vd.kBottomCamera, resolution=vd.kVGA):
+        """
+        initilization.
+
+        Args:
+            IP: NAO's IP
+            cameraId: bottom camera (1,default) or top camera (0).
+            resolution: kVGA, default: 640*480)
+        Return:
+            none
+        """
+        self.cameraProxy = ALProxy("ALVideoDevice", robotIp, port)
+        self.motionProxy = ALProxy("ALMotion", robotIp, port)
+        self.memoryProxy = ALProxy("ALMemory", robotIp, port)
+        self.landmarkProxy = ALProxy("ALLandMarkDetection", robotIp, port)
+        self.cameraId = cameraId
+        self.cameraName = "CameraBottom" if self.cameraId == vd.kBottomCamera else "CameraTop"
+        self.resolution = resolution
+        self.colorSpace = vd.kBGRColorSpace
+        self.fps = 20
+        self.frameHeight = 0
+        self.frameWidth = 0
+        self.frameChannels = 0
+        self.frameArray = None
+        self.cameraPitchRange = 47.64 / 180 * np.pi
+        self.cameraYawRange = 60.97 / 180 * np.pi
+        self.cameraProxy.setActiveCamera(self.cameraId)
+
+    def updateFrame(self, client="python_client"):
+        """
+        get a new image from the specified camera and save it in self._frame.
+
+        Args:
+            client: client name.
+        Return:
+            none.
+        """
+        if self.cameraProxy.getActiveCamera() != self.cameraId:
+            self.cameraProxy.setActiveCamera(self.cameraId)
+            time.sleep(1)
+
+        videoClient = self.cameraProxy.subscribe(client, self.resolution, self.colorSpace, self.fps)
+        print("videoClient: {}".format(videoClient))
+        frame = self.cameraProxy.getImageRemote(videoClient)
+        self.cameraProxy.unsubscribe(videoClient)
+        try:
+            self.frameWidth = frame[0]
+            self.frameHeight = frame[1]
+            self.frameChannels = frame[2]
+            self.frameArray = np.frombuffer(frame[6], dtype=np.uint8).reshape([frame[1], frame[0], frame[2]])
+        except IndexError:
+            print("get image failed!")
+
+
+class RedBallDetection(VisualBasis):
+    """调用updateBallData，更新红球信息"""
+
+    def __init__(self, robotIp, port=9559, cameraId=vd.kBottomCamera, resolution=vd.kVGA):
+        super(RedBallDetection, self).__init__(robotIp, port, cameraId, resolution)
+        self.ballData = {"centerX": 0, "centerY": 0, "radius": 0}
+        self.ballPosition = {"disX": 0, "disY": 0, "angle": 0}
+        self.ballRadius = 0.021
 
     # noinspection PyMethodMayBeStatic
     def __compute_score(self, rects):
@@ -28,10 +90,14 @@ class RedBallDetection(object):
         minHSV2 = np.array([156, 43, 46])
         maxHSV2 = np.array([180, 255, 255])
 
-        img = self.img.copy()
+        img = self.frameArray.copy()
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
+        Rects = list()
+        # stime = datetime.now()
         for rect in rects:
+            if isinstance(rect, list) is False:
+                rect = rect.tolist()
             x, y, r = int(rect[0]), int(rect[1]), int(rect[2])
             H = hsv[y - r:y + r, x - r:x + r, 0]
             S = hsv[y - r:y + r, x - r:x + r, 1]
@@ -42,23 +108,26 @@ class RedBallDetection(object):
                     np.where(S >= minHSV2[2]) and np.where(S <= maxHSV2[2]))
             V = (np.where(V >= minHSV1[2]) and np.where(V <= maxHSV1[2])) or (
                     np.where(V >= minHSV2[2]) and np.where(V <= maxHSV2[2]))
-
-            rect.append(10000 * np.min([len(H), len(S), len(V)]) / float(r ** 2))
-        return rects
+            score = int((10000 * np.min([len(H), len(S), len(V)]) + 0.0000001) / (r ** 2 + 0.0000001))
+            rect.append(score)
+            Rects.append(rect)
+        # print("hsv split time: {}s".format(datetime.now() - stime))
+        return Rects
 
     def __nms(self, rects):
         """非极大值抑制"""
         rects = self.__compute_score(rects=rects)
-        rects.sort(
-            cmp=lambda rects1, rects2: (rects2[3] - rects1[3]))
+        # stime = datetime.now()
+        rects = sorted(rects, cmp=lambda a, b: a[3] - b[3])
+        # print("sorted time: {}s".format(datetime.now() - stime))
         return rects[0]
 
     def __HoughDetection(self):
         """霍夫圆检测"""
-        img = self.img.copy()
+        img = self.frameArray.copy()
         binImg = self.__preProcess(img)
         circles = cv2.HoughCircles(binImg, cv2.HOUGH_GRADIENT, 1, 100,
-                                   param1=150, param2=15, minRadius=8, maxRadius=48)
+                                   param1=150, param2=25, minRadius=8, maxRadius=48)
         if circles is None:
             circles = []
             # print("no circle")
@@ -132,15 +201,19 @@ class RedBallDetection(object):
         vector, img = hog.hog_extract()
         return np.round(vector[0], 4)
 
-    def __result(self):
+    def __result(self, isKnn=True):
         """得到最终结果, 返回圆心，半径"""
         Rects = []
         knn = KNN("data_ball.txt")
-        srcImg = self.img.copy()
+        srcImg = self.frameArray.copy()
         rects = self.__HoughDetection()
         if len(rects) is 0:
             # print("no rects")
             return []
+        # 不使用KNN分类
+        if isKnn is False:
+            Rect = self.__nms(rects)
+            return Rect
 
         for rect in rects:  # 检测每个轮廓
             resultTotal = []
@@ -180,88 +253,42 @@ class RedBallDetection(object):
 
         return Rect
 
-    def __takePhoto(self):
+    def updateBallData(self, standState="standInit", client="python_client", isKnn=True):
         """
-        拍照
-        :return:numpy array, toptopCameraX, topCameraY, topCameraHeight
+        更新红球信息
         """
-        robotIp = self.robotIp
-        port = self.port
-        camProxy = ALProxy("ALVideoDevice", robotIp, port)
-        motionProxy = ALProxy("ALMotion", robotIp, port)
-        camProxy.setActiveCamera(1)
-        resolution = 2  # VGA
-        colorSpace = 11  # RGB
-        bottomCamera = 1
-        subscriberID = "subscriberID"
-
-        cameraPosition = motionProxy.getPosition("CameraBottom", 2, True)
-        cameraAngles = motionProxy.getAngles("Head", True)
-        subscriberID = camProxy.subscribeCamera(subscriberID, bottomCamera, resolution, colorSpace, 5)
-        naoImage = camProxy.getImageRemote(subscriberID)
-
-        camProxy.releaseImage(subscriberID)
-        camProxy.unsubscribe(subscriberID)
-        imageWidth = naoImage[0]
-        imageHeight = naoImage[1]
-        array = naoImage[6]
-
-        img = Image.frombytes("RGB", (imageWidth, imageHeight), array)
-
-        bottomCameraX = cameraPosition[0]
-        bottomCameraY = cameraPosition[1]
+        stime = time.time()
+        self.updateFrame(client)
+        print("take photo times: {}s".format(time.time() - stime))
+        cameraPosition = self.motionProxy.getPosition("CameraBottom", 2, True)
+        cameraX = cameraPosition[0]
+        cameraY = cameraPosition[1]
         cameraHeight = cameraPosition[2]
-
-        # PIL image 转cv2 image
-        open_cv_image = np.array(img)
-        img = cv2.cvtColor(open_cv_image, cv2.COLOR_RGB2BGR)
-        # cv2.imwrite('ballTest.jpg', img)
-        return img, bottomCameraX, bottomCameraY, cameraHeight, cameraAngles
-
-    # noinspection PyMethodMayBeStatic
-    def __distance_fixing(self, ballDistance):
-        x = ballDistance
-        a = -0.3165899349995387
-        b = 1.150241967154712
-        fx = (x - a) / b
-        return fx
-
-    def compute_ballPosition(self, standState="standInit", ballRadius=0.021):
-        """
-        调用此方法，计算球的在图片中的圆心，半径，实际坐标、方位角、距离
-        :param standState:stand State
-        :param ballRadius:ball Radius
-        :return:[centerX at img, centerY at img, radius at img, ballX, ballY, ballYaw, img]
-        """
-        motionProxy = ALProxy("ALMotion", self.robotIp, self.port)
-        img, cameraX, cameraY, cameraHeight, cameraAngles = self.__takePhoto()
-        self.img = img.copy()
-        imageHeight, imageWidth, _ = img.shape
-        ball_rect = self.__result()
+        img = self.frameArray.copy()
+        imageHeight, imageWidth = self.frameHeight, self.frameWidth
+        ball_rect = self.__result(isKnn)
 
         cameraYawRange = 60.97 * np.pi / 180
         cameraPitchRange = 47.64 * np.pi / 180
 
         if len(ball_rect) is not 0:
-            centerX = ball_rect[0]
-            centerY = ball_rect[1]
-            radius = ball_rect[2]
+            centerX = int(ball_rect[0])
+            centerY = int(ball_rect[1])
+            radius = int(ball_rect[2])
             cv2.rectangle(img, (centerX - radius, centerY - radius), (centerX + radius, centerY + radius), (0, 0, 255),
                           2)
 
             bottomCameraDirection = {"standInit": 49.2, "standUp": 39.7}
             try:
                 cameraDirection = bottomCameraDirection[standState]
-            except KeyError:
-                print("Error! unknown standState, please check the value of stand state!")
-            else:
-                headPitches = motionProxy.getAngles("HeadPitch", True)
+                headPitches = self.motionProxy.getAngles("HeadPitch", True)
                 headPitch = headPitches[0]
-                headYaws = motionProxy.getAngles("HeadYaw", True)
+                headYaws = self.motionProxy.getAngles("HeadYaw", True)
                 headYaw = headYaws[0]
                 ballPitch = (centerY - imageHeight / 2) * cameraPitchRange / 480.0  # y (pitch angle)
                 ballYaw = (imageWidth / 2 - centerX) * cameraYawRange / 640.0  # x (yaw angle)
-                dPitch = (cameraHeight - ballRadius) / np.tan(cameraDirection / 180 * np.pi + headPitch + ballPitch)
+                dPitch = (cameraHeight - self.ballRadius) / np.tan(
+                    cameraDirection / 180 * np.pi + headPitch + ballPitch)
                 dYaw = dPitch / np.cos(ballYaw)
                 ballX = dYaw * np.cos(ballYaw + headYaw) + cameraX + 0.035
                 ballY = dYaw * np.sin(ballYaw + headYaw) + cameraY
@@ -271,17 +298,24 @@ class RedBallDetection(object):
                     # ky = 12.604*ballX**4 - 37.962*ballX**3 + 43.163*ballX**2 - 22.688*ballX + 6.0526
                     ballY = ky * ballY
                     ballYaw = np.arctan2(ballY, ballX)
-                return [centerX, centerY, radius, ballX, ballY, ballYaw, img]
-        return []
+
+                self.ballData = {"centerX": centerX, "centerY": centerY, "radius": radius}
+                self.ballPosition = {"disX": ballX, "disY": ballY, "angle": ballYaw}
+            except KeyError:
+                print("Error! unknown standState, please check the value of stand state!")
 
 
-class StickDetection(object):
+class StickDetection(VisualBasis):
     """调用compute_stickPosition，计算杆的方位角，距离"""
 
-    def __init__(self, robotIp, port=9559):
-        self.img = None
-        self.robotIp = robotIp
-        self.port = port
+    def __init__(self, robotIp, port=9559, cameraId=vd.kTopCamera, resolution=vd.kVGA):
+        super(StickDetection, self).__init__(robotIp, port, cameraId, resolution)
+        self.boundRect = []
+        self.stickAngle = 0.0  # rad
+        self.stickH = 0.47
+        self.stickDistance = 0
+        self.minHSV = np.array([27, 55, 115])
+        self.maxHSV = np.array([45, 255, 255])
 
     # noinspection PyMethodMayBeStatic
     def __reshapeStickRect(self, rawRect, numbers):
@@ -341,10 +375,9 @@ class StickDetection(object):
         # 预处理
         bilateral = self.__bilateral__filter(img)
         HSVImg = cv2.cvtColor(bilateral, cv2.COLOR_BGR2HSV)  # 转到HSV空间
-        hmin, hmax, smin, vmin = 27, 45, 55, 115
         # 二值化处理
-        minHSV = np.array([hmin, smin, vmin])
-        maxHSV = np.array([hmax, 255, 255])
+        minHSV = self.minHSV
+        maxHSV = self.maxHSV
         binImg = cv2.inRange(HSVImg, minHSV, maxHSV)
 
         # 图像滤波处理（腐蚀，膨胀，高斯）
@@ -368,25 +401,29 @@ class StickDetection(object):
     # noinspection PyMethodMayBeStatic
     def __compute_score(self, rects):
         """计算score"""
+        Rects = list()
         for rect in rects:
+            if isinstance(rect, list) is False:
+                rect = rect.tolist()
+            rect = rect.tolist()
             w, h = rect[2], rect[3]
-            rect.append(int(10000 * abs(float(w) / h - 0.1)))
-        return rects
+            rect.append(int(10000 * abs(float(w + 0.0000001) / (h + 0.0000001) - 0.1)))
+            Rects.append(rect)
+        return Rects
 
     def __nms(self, rects):
         """非极大值抑制"""
         rects = self.__compute_score(rects=rects)
-        rects.sort(
-            cmp=lambda rects1, rects2: (rects1[4] - rects2[4]))
+        rects.sorted(cmp=lambda a, b: a[4] - b[4])
         return rects[0]
 
     def __result(self):
-        img = self.img
+        img = self.frameArray
         Rects = []
         knn = KNN("data_stick.txt")
         # 返回检测到的矩形矩阵
         # 只需要检测边缘，返回边缘所在的矩阵，返回的轮廓
-        rects = self.__contoursDetection(self.img)
+        rects = self.__contoursDetection(self.frameArray)
 
         if len(rects) == 0:
             # print("no rects")
@@ -423,43 +460,6 @@ class StickDetection(object):
 
         return stick_rectangle
 
-    def __takePhoto(self):
-        """
-        拍照
-        :return:numpy array, toptopCameraX, topCameraY, topCameraHeight
-        """
-        robotIp = self.robotIp
-        port = self.port
-        camProxy = ALProxy("ALVideoDevice", robotIp, port)
-        motionProxy = ALProxy("ALMotion", robotIp, port)
-        camProxy.setActiveCamera(1)
-        resolution = 2  # VGA
-        colorSpace = 11  # RGB
-        topCamera = 0
-        subscriberID = "subscriberID"
-
-        cameraPosition = motionProxy.getPosition("CameraTop", 2, True)
-        cameraAngles = motionProxy.getAngles("Head", True)
-        subscriberID = camProxy.subscribeCamera(subscriberID, topCamera, resolution, colorSpace, 5)
-        naoImage = camProxy.getImageRemote(subscriberID)
-
-        camProxy.releaseImage(subscriberID)
-        camProxy.unsubscribe(subscriberID)
-        imageWidth = naoImage[0]
-        imageHeight = naoImage[1]
-        array = naoImage[6]
-
-        img = Image.frombytes("RGB", (imageWidth, imageHeight), array)
-
-        topCameraX = cameraPosition[0]
-        topCameraY = cameraPosition[1]
-        cameraHeight = cameraPosition[2]
-
-        # PIL image 转cv2 image
-        open_cv_image = np.array(img)
-        img = cv2.cvtColor(open_cv_image, cv2.COLOR_RGB2BGR)
-        return img, topCameraX, topCameraY, cameraHeight, cameraAngles
-
     # noinspection PyMethodMayBeStatic
     def __distance_fixing(self, stickDistance):
         x = stickDistance
@@ -469,16 +469,13 @@ class StickDetection(object):
         return fx
 
     # noinspection PyMethodMayBeStatic
-    def compute_stickPosition(self, stickH=0.47):
+    def updateStickData(self, client="test"):
         """
-        调用此方法，计算杆的方位角，距离
-        :param stickH: stick Height
-        :return: stickAngleX, stickDistance, img 标注了黄杆的图片
+        更新黄杆信息
         """
-        time.sleep(0.05)
-        img, topCameraX, topCameraY, cameraHeight, cameraAngles = self.__takePhoto()
+        self.updateFrame(client)
         cameraYaw, cameraPitch = cameraAngles
-        self.img = img
+        self.frameArray = img
         imageHeight, imageWidth, _ = img.shape
         stick_rect = self.__result()
         if len(stick_rect) is not 0:
@@ -497,42 +494,54 @@ class StickDetection(object):
             stickAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
             stickAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
 
-            stickDistance = (cameraHeight - stickH / 2.0) / np.tan(stickAngleY)
+            stickDistance = (cameraHeight - self.stickH / 2.0) / np.tan(stickAngleY)
             stickDistance = self.__distance_fixing(stickDistance)
 
-            return stickAngleX, stickDistance, img
+            self.stickDistance = stickDistance
+            self.boundRect = [sx, sy, sw, sh]
+            self.stickAngle = stickAngleX  # rad
         else:
             print("no stick")
-            return []
+            self.stickDistance = 0
+            self.boundRect = []
+            self.stickAngle = 0.0  # rad
 
 
-class LandMarkDetection(object):
-    """调用compute_markPosition,获取LandMark坐标，距离，角度"""
+class LandMarkDetection(VisualBasis):
+    """调用updateLandMarkData, 更新LandMark坐标，距离，角度"""
 
-    def __init__(self, robotIp, port=9559):
-        self.robotIp = robotIp
-        self.port = port
+    def __init__(self, robotIp, port=9559, cameraId=vd.kTopCamera, landMarkSize=0.105):
+        super(LandMarkDetection, self).__init__(robotIp, port)
+        self.cameraId = cameraId
+        self.cameraName = "CameraTop" if cameraId == vd.kTopCamera else "CameraBottom"
+        self.landMarkSize = landMarkSize
+        self.disX = 0
+        self.disY = 0
+        self.dist = 0
+        self.yawAngle = 0
+        self.cameraProxy.setActiveCamera(self.cameraId)
 
-    def compute_markPosition(self, landmarkTheoreticalSize=0.11):
+    def updateLandMarkData(self):
         """
-        调用此函数，获取LandMark坐标，距离，角度
-        :param landmarkTheoreticalSize:LandMark边长
-        :return:landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle
+        更新LandMark信息
         """
         currentCamera = "CameraTop"
-        memoryProxy = ALProxy("ALMemory", self.robotIp, self.port)
-        landmarkProxy = ALProxy("ALLandMarkDetection", self.robotIp, self.port)
-        landmarkProxy.subscribe("landmark")
-        markData = memoryProxy.getData("LandmarkDetected")
-        while markData is None or len(markData) == 0:
-            markData = memoryProxy.getData("LandmarkDetected")
-            print("No mark")
+        self.landmarkProxy.subscribe("landmark")
+        markData = self.memoryProxy.getData("LandmarkDetected")
+        for i in xrange(3):
+            markData = self.memoryProxy.getData("LandmarkDetected")
+            if len(markData) is not 0:
+                break
+        if len(markData) is 0:
+            self.disX = 0
+            self.disY = 0
+            self.dist = 0
+            self.yawAngle = 0
         wzCamera = markData[1][0][0][1]
         wyCamera = markData[1][0][0][2]
         angularSize = markData[1][0][0][3]
-        distanceFromCameraToLandmark = landmarkTheoreticalSize / (2 * math.tan(angularSize / 2))
-        motionProxy = ALProxy("ALMotion", IP, 9559)
-        transform = motionProxy.getTransform(currentCamera, 2, True)
+        distanceFromCameraToLandmark = self.landMarkSize / (2 * math.tan(angularSize / 2))
+        transform = self.motionProxy.getTransform(currentCamera, 2, True)
         transformList = almath.vectorFloat(transform)
         robotToCamera = almath.Transform(transformList)
         cameraToLandmarkRotationTransform = almath.Transform_from3DRotation(0, wyCamera, wzCamera)
@@ -540,22 +549,14 @@ class LandMarkDetection(object):
         robotToLandmark = robotToCamera * cameraToLandmarkRotationTransform * cameraToLandmarkTranslationTransform
         landMarkX = robotToLandmark.r1_c4
         landMarkY = robotToLandmark.r2_c4
-        landmarkProxy.unsubscribe("landmark")
+        self.landmarkProxy.unsubscribe("landmark")
         yawAngle = math.atan2(landMarkY, landMarkX)
-        return [landMarkX, landMarkY, distanceFromCameraToLandmark, yawAngle]
+        self.disX = landMarkX
+        self.disY = landMarkY
+        self.dist = distanceFromCameraToLandmark
+        self.yawAngle = yawAngle
 
 
 if __name__ == '__main__':
-    for ii in range(100):
-        s_time = time.time()
-        YellowStick = StickDetection("192.168.43.165")
-        stickInfo = YellowStick.compute_stickPosition1()
-        if len(stickInfo) is not 0:
-            stickImg = stickInfo[2]
-            cv2.imshow("YellowStick", stickImg)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-            print(stickInfo[0:2])
-        else:
-            print("no stick")
-        print(time.time() - s_time)
+    for ii in range(5):
+        pass
