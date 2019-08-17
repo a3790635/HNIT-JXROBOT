@@ -236,7 +236,11 @@ class RedBallDetection(VisualBasis):
                 newEndX, newEndY = int(newRect[2]), int(newRect[3])
                 rectBallArea = srcImg[newInitY:newEndY, newInitX:newEndX, :]
 
-                resultColor = self.__calColorFeature(rectBallArea, 16)
+                try:
+                    resultColor = self.__calColorFeature(rectBallArea, 16)
+                except Exception, err:
+                    print err
+                    break
                 cellSize = min(newEndX - newInitX, newEndY - newInitY)
                 resultHOG = self.__calHOGFeature(rectBallArea, cellSize / 2)
                 resultTotal.extend(resultColor)
