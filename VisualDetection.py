@@ -240,11 +240,11 @@ class RedBallDetection(VisualBasis):
                     resultColor = self.__calColorFeature(rectBallArea, 16)
                 except Exception, err:
                     print err
-                    break
-                cellSize = min(newEndX - newInitX, newEndY - newInitY)
-                resultHOG = self.__calHOGFeature(rectBallArea, cellSize / 2)
-                resultTotal.extend(resultColor)
-                resultTotal.extend(resultHOG)
+                else:
+                    cellSize = min(newEndX - newInitX, newEndY - newInitY)
+                    resultHOG = self.__calHOGFeature(rectBallArea, cellSize / 2)
+                    resultTotal.extend(resultColor)
+                    resultTotal.extend(resultHOG)
 
             resultTotal = np.array(resultTotal).reshape(1, -1).astype('float64')
             classify = knn.classifyVector(resultTotal)
