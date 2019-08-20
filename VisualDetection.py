@@ -626,17 +626,33 @@ class LandMarkDetection(VisualBasis):
 
 
 if __name__ == '__main__':
-    stick_detect = StickDetection("192.168.137.150")
     # stick_detect = StickDetection("127.0.0.1")
     with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
         f.write("\n")
+    '''
+    stick_detect = StickDetection("192.168.137.150")
     for ii in range(20):
         s_time = time.time()
         stick_detect.updateStickData()
         stick_img = stick_detect.stickImg
         with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
             f.write("all time: {:.2}s\n".format(time.time() - s_time))
-        # cv2.imshow("stick", stick_img)
-        # cv2.waitKey(1000)
-        # cv2.destroyWindow("stick")
+        if stick_img is not None:
+            cv2.imshow("stick", stick_img)
+            cv2.waitKey(1000)
+            cv2.destroyWindow("stick")
+    '''
+    ball_detect = RedBallDetection("192.168.137.150")
+    for ii in range(20):
+        s_time = time.time()
+        ball_detect.updateBallData()
+        ball_img = ball_detect.ballImg
+        with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
+            f.write("all time: {:.2}s\n".format(time.time() - s_time))
+        if ball_img is not None:
+            cv2.imshow("ball", ball_img)
+            cv2.waitKey(1000)
+            cv2.destroyWindow("ball")
+        else:
+            print("no ball!")
 # 192.168.137.150
