@@ -5,6 +5,7 @@ import os
 import time
 import math
 import almath
+import codecs
 from TargetFeature import HogFeature, ColorFeature
 from Classifier import KNN
 from naoqi import ALProxy
@@ -33,6 +34,8 @@ class VisualBasis(object):
         self.motionProxy = ALProxy("ALMotion", robotIp, port)
         self.memoryProxy = ALProxy("ALMemory", robotIp, port)
         self.landmarkProxy = ALProxy("ALLandMarkDetection", robotIp, port)
+        self.AutonomousLifeProxy = ALProxy("ALAutonomousLife", robotIp, port)
+        self.AutonomousLifeProxy.setState("disabled")
         self.cameraId = cameraId
         self.cameraName = "CameraBottom" if self.cameraId == vd.kBottomCamera else "CameraTop"
         self.resolution = resolution
@@ -60,7 +63,7 @@ class VisualBasis(object):
             time.sleep(1)
 
         videoClient = self.cameraProxy.subscribe(client, self.resolution, self.colorSpace, self.fps)
-        print("videoClient: {}".format(videoClient))
+        # print("videoClient: {}".format(videoClient))
         frame = self.cameraProxy.getImageRemote(videoClient)
         self.cameraProxy.unsubscribe(videoClient)
         try:
@@ -124,7 +127,12 @@ class RedBallDetection(VisualBasis):
         return rects[0]
 
     def __HoughDetection(self):
-        """霍夫圆检测"""
+        """
+        对图像进行霍夫圆检测
+        首先图像预处理-----转hsv图像，阈值分割
+        霍夫圆检测----调用opencv HoughCircles检测轮廓，返回可能的圆形轮廓列表
+        :return:  rects of possible red ball
+        """
         img = self.frameArray.copy()
         binImg = self.__preProcess(img)
         circles = cv2.HoughCircles(binImg, cv2.HOUGH_GRADIENT, 1, 100,
@@ -137,7 +145,10 @@ class RedBallDetection(VisualBasis):
         return circles
 
     def __preProcess(self, img):
-        """图像处理"""
+        """
+        图像处理
+        二值化：所有灰度大于或等于阀值的像素被判定为属于特定物体
+        """
         HSVImg = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
         minHSV1 = np.array([0, 43, 46])
@@ -156,7 +167,12 @@ class RedBallDetection(VisualBasis):
 
     # noinspection PyMethodMayBeStatic
     def __filter(self, img):
-        """滤波"""
+        """
+        图像处理----在保证图像细节的基础上对图像进行降噪处理（噪声抑制）
+        使用腐蚀膨胀消除噪点，高斯处理使图像平滑----线性平滑滤波消除高斯噪声
+        :param img: 经过阈值处理的图像
+        :return: 滤波后的图像
+        """
         kernelErosion = np.ones((3, 3), np.uint8)
         kernelDilation = np.ones((3, 3), np.uint8)
         resImg = cv2.erode(img, kernelErosion, iterations=2)
@@ -167,6 +183,12 @@ class RedBallDetection(VisualBasis):
 
     # noinspection PyMethodMayBeStatic
     def __reshapeBallRect(self, rawRect, numbers):
+        """
+        对当前矩形框进行四等分，为下一步计算颜色特征做准备
+        :param rawRect:
+        :param numbers:
+        :return:
+        """
         newRect = np.zeros((numbers, 4))
         initX, initY, endX, endY = rawRect[0], rawRect[1], rawRect[2], rawRect[3]  # 初始化参数
 
@@ -203,7 +225,13 @@ class RedBallDetection(VisualBasis):
         return np.round(vector[0], 4)
 
     def __result(self, isKnn=True):
-        """得到最终结果, 返回圆心，半径"""
+        """
+        传入图片，使用分类器
+        然后对每一张图片进行目标检测
+        并获得该目标区域的特征向量
+        在放到分类器里面得到预测的结果，最后如果概率大于0.5，则认为是，否则为不是
+        得到最终结果, 返回圆心，半径
+        """
         Rects = []
         knn = KNN("data_ball.txt")
         srcImg = self.frameArray.copy()
@@ -211,7 +239,7 @@ class RedBallDetection(VisualBasis):
         if len(rects) is 0:
             # print("no rects")
             return []
-        # 不使用KNN分类
+        # 使用KNN分类
         if isKnn is False:
             Rect = self.__nms(rects)
             return Rect
@@ -230,7 +258,7 @@ class RedBallDetection(VisualBasis):
             if rect[0] < 0 or rect[1] < 0 or rect[2] > 640 or rect[3] > 480:
                 print("out of bound")
                 continue
-            newRects = self.__reshapeBallRect(rect, 4)
+            newRects = self.__reshapeBallRect(rect, 4)   # 将球的矩形框分为四等分，分别进行特征提取
 
             for newRect in newRects:
                 newInitX, newInitY = int(newRect[0]), int(newRect[1])
@@ -264,7 +292,8 @@ class RedBallDetection(VisualBasis):
         """
         stime = time.time()
         self.updateFrame(client)
-        print("take photo times: {}s".format(time.time() - stime))
+        with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as fTime:
+            fTime.write("take photo times: {:.2}s\n".format(time.time() - stime))
         cameraPosition = self.motionProxy.getPosition("CameraBottom", 2, True)
         cameraX = cameraPosition[0]
         cameraY = cameraPosition[1]
@@ -322,9 +351,15 @@ class StickDetection(VisualBasis):
         self.stickDistance = 0
         self.minHSV = np.array([27, 55, 115])
         self.maxHSV = np.array([45, 255, 255])
+        self.stickImg = None
 
     # noinspection PyMethodMayBeStatic
     def __reshapeStickRect(self, rawRect, numbers):
+        """
+        :param rawRect:  原始的矩形框
+        :param numbers: 需要将原始矩形框进行等分的数量
+        :return:  返回该矩形框等分后的列表
+        """
         newRect = np.zeros((numbers, 4))
         initX, initY, endX, endY = rawRect[0], rawRect[1], rawRect[2], rawRect[3]  # 初始化参数
 
@@ -339,6 +374,11 @@ class StickDetection(VisualBasis):
 
     # noinspection PyMethodMayBeStatic
     def __calColorFeature(self, img, number=16):
+        """
+        :param img: 原始图像
+        :param number: 需要分成多少个区间
+        :return:将特征向量除以总像素的个数得到归一化的结果
+        """
         color = ColorFeature(img, number)
         result = color.colorExtract(img)
 
@@ -346,6 +386,12 @@ class StickDetection(VisualBasis):
 
     # noinspection PyMethodMayBeStatic
     def __calHOGFeature(self, img, cellSize):
+        """
+        将图像分成小的连通区域， 选用梯度方向作为特征
+        :param img:  原始图像
+        :param cellSize: 细胞单元的大小
+        :return:   采集细胞单元中各像素点的梯度边缘直方图， 将直方图组合起来构成特征描述器
+        """
         rectStickArea = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         hog = HogFeature(rectStickArea, cellSize)
         vector, _ = hog.hog_extract()
@@ -354,7 +400,9 @@ class StickDetection(VisualBasis):
 
     # noinspection PyMethodMayBeStatic
     def __bilateral__filter(self, img):
-        """双边滤波"""
+        """
+        双边滤波---保持边缘，降噪平滑
+        """
         bilateral = cv2.bilateralFilter(img, 25, 12.5, 50)
         return bilateral
 
@@ -374,7 +422,10 @@ class StickDetection(VisualBasis):
         return frameBin
 
     def __contoursDetection(self, img):  # 检测图像边界
-
+        """
+        :param img:  输入处理好的图像
+        :return:     调用opencv, 检测矩形框
+        """
         minPerimeter = 100
         minArea = 850
 
@@ -411,7 +462,6 @@ class StickDetection(VisualBasis):
         for rect in rects:
             if isinstance(rect, list) is False:
                 rect = rect.tolist()
-            rect = rect.tolist()
             w, h = rect[2], rect[3]
             rect.append(int(10000 * abs(float(w + 0.0000001) / (h + 0.0000001) - 0.1)))
             Rects.append(rect)
@@ -420,10 +470,10 @@ class StickDetection(VisualBasis):
     def __nms(self, rects):
         """非极大值抑制"""
         rects = self.__compute_score(rects=rects)
-        rects.sorted(cmp=lambda a, b: a[4] - b[4])
+        rects = sorted(rects, cmp=lambda a, b: a[4] - b[4])
         return rects[0]
 
-    def __result(self):
+    def __result(self, isKnn=True):
         img = self.frameArray
         Rects = []
         knn = KNN("data_stick.txt")
@@ -434,6 +484,10 @@ class StickDetection(VisualBasis):
         if len(rects) == 0:
             # print("no rects")
             return []
+
+        if isKnn is False:
+            Rect = self.__nms(rects)
+            return Rect
 
         for rect in rects:
             rect_ = rect[:4]
@@ -475,15 +529,22 @@ class StickDetection(VisualBasis):
         return fx
 
     # noinspection PyMethodMayBeStatic
-    def updateStickData(self, client="test"):
+    def updateStickData(self, client="stick", isKnn=True):
         """
         更新黄杆信息
+
         """
+        stime = time.time()
         self.updateFrame(client)
+        with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as fTime:
+            fTime.write("take photo times: {:.2}s\n".format(time.time() - stime))
+        cameraPosition = self.motionProxy.getPosition("CameraBottom", 2, True)
+        cameraHeight = cameraPosition[2]
+        cameraAngles = self.motionProxy.getAngles("Head", True)
         cameraYaw, cameraPitch = cameraAngles
         img = self.frameArray
         imageHeight, imageWidth, _ = img.shape
-        stick_rect = self.__result()
+        stick_rect = self.__result(isKnn)
         if len(stick_rect) is not 0:
             sx = stick_rect[0]
             sy = stick_rect[1]
@@ -493,6 +554,7 @@ class StickDetection(VisualBasis):
             centerX = sx + 0.1 * sh / 2
             # 画出目标
             cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (0, 0, 255), 2)
+            self.stickImg = img
 
             cameraRangeX = 60.97 * np.pi / 180
             cameraRangeY = 47.64 * np.pi / 180
@@ -564,13 +626,17 @@ class LandMarkDetection(VisualBasis):
 
 
 if __name__ == '__main__':
-    ball_detect = RedBallDetection("192.168.137.150")
+    stick_detect = StickDetection("192.168.137.150")
+    # stick_detect = StickDetection("127.0.0.1")
+    with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
+        f.write("\n")
     for ii in range(20):
         s_time = time.time()
-        ball_detect.updateBallData()
-        ball_img = ball_detect.ballImg
-        print("all time: {}".format(time.time() - s_time))
-        # cv2.imshow("ball", ball_img)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-# 192.168.137.150 
+        stick_detect.updateStickData()
+        stick_img = stick_detect.stickImg
+        with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
+            f.write("all time: {:.2}s\n".format(time.time() - s_time))
+        # cv2.imshow("stick", stick_img)
+        # cv2.waitKey(1000)
+        # cv2.destroyWindow("stick")
+# 192.168.137.150
