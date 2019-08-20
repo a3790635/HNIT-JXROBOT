@@ -80,6 +80,7 @@ class RedBallDetection(VisualBasis):
         self.ballData = {"centerX": 0, "centerY": 0, "radius": 0}
         self.ballPosition = {"disX": 0, "disY": 0, "angle": 0}
         self.ballRadius = 0.021
+        self.ballImg = None
 
     # noinspection PyMethodMayBeStatic
     def __compute_score(self, rects):
@@ -281,6 +282,7 @@ class RedBallDetection(VisualBasis):
             radius = int(ball_rect[2])
             cv2.rectangle(img, (centerX - radius, centerY - radius), (centerX + radius, centerY + radius), (0, 0, 255),
                           2)
+            self.ballImg = img
 
             bottomCameraDirection = {"standInit": 49.2, "standUp": 39.7}
             try:
@@ -479,7 +481,7 @@ class StickDetection(VisualBasis):
         """
         self.updateFrame(client)
         cameraYaw, cameraPitch = cameraAngles
-        self.frameArray = img
+        img = self.frameArray
         imageHeight, imageWidth, _ = img.shape
         stick_rect = self.__result()
         if len(stick_rect) is not 0:
@@ -562,5 +564,13 @@ class LandMarkDetection(VisualBasis):
 
 
 if __name__ == '__main__':
-    for ii in range(5):
-        pass
+    ball_detect = RedBallDetection("192.168.137.150")
+    for ii in range(20):
+        s_time = time.time()
+        ball_detect.updateBallData()
+        ball_img = ball_detect.ballImg
+        print("all time: {}".format(time.time() - s_time))
+        # cv2.imshow("ball", ball_img)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+# 192.168.137.150 
