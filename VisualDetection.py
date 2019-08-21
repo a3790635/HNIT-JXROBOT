@@ -34,8 +34,8 @@ class VisualBasis(object):
         self.motionProxy = ALProxy("ALMotion", robotIp, port)
         self.memoryProxy = ALProxy("ALMemory", robotIp, port)
         self.landmarkProxy = ALProxy("ALLandMarkDetection", robotIp, port)
-        self.AutonomousLifeProxy = ALProxy("ALAutonomousLife", robotIp, port)
-        self.AutonomousLifeProxy.setState("disabled")
+        self.postureProxy = ALProxy("ALRobotPosture", robotIp, port)
+        self.tts = ALProxy("ALTextToSpeech", robotIp, port)
         self.cameraId = cameraId
         self.cameraName = "CameraBottom" if self.cameraId == vd.kBottomCamera else "CameraTop"
         self.resolution = resolution
@@ -258,7 +258,7 @@ class RedBallDetection(VisualBasis):
             if rect[0] < 0 or rect[1] < 0 or rect[2] > 640 or rect[3] > 480:
                 print("out of bound")
                 continue
-            newRects = self.__reshapeBallRect(rect, 4)   # 将球的矩形框分为四等分，分别进行特征提取
+            newRects = self.__reshapeBallRect(rect, 4)  # 将球的矩形框分为四等分，分别进行特征提取
 
             for newRect in newRects:
                 newInitX, newInitY = int(newRect[0]), int(newRect[1])
@@ -268,18 +268,19 @@ class RedBallDetection(VisualBasis):
                 try:
                     resultColor = self.__calColorFeature(rectBallArea, 16)
                 except Exception, err:
-                    print err
+                    print(err)
                 else:
                     cellSize = min(newEndX - newInitX, newEndY - newInitY)
                     resultHOG = self.__calHOGFeature(rectBallArea, cellSize / 2)
                     resultTotal.extend(resultColor)
                     resultTotal.extend(resultHOG)
-
-            resultTotal = np.array(resultTotal).reshape(1, -1).astype('float64')
-            classify = knn.classifyVector(resultTotal)
-
-            if classify == 1:
-                Rects.append(rect_)
+            try:
+                resultTotal = np.array(resultTotal).reshape(1, -1).astype('float64')
+                classify = knn.classifyVector(resultTotal)
+                if classify == 1:
+                    Rects.append(rect_)
+            except Exception, err:
+                print(err)
         if len(Rects) is 0:
             return []
         Rect = self.__nms(Rects)
@@ -338,6 +339,53 @@ class RedBallDetection(VisualBasis):
                 self.ballPosition = {"disX": ballX, "disY": ballY, "angle": ballYaw}
             except KeyError:
                 print("Error! unknown standState, please check the value of stand state!")
+
+    def getBallPosition(self):
+        """
+        get ball position.
+
+        Return:
+            distance in x axis, distance in y axis and direction related to Nao.
+        """
+        disX = self.ballPosition["disX"]
+        disY = self.ballPosition["disY"]
+        angle = self.ballPosition["angle"]
+        print("ball :", [disX, disY, angle])
+        return [disX, disY, angle]
+
+    def getBallInfoInImage(self):
+        """
+        get ball information in image.
+
+        Return:
+            a list of centerX, centerY and radius of the red ball.
+        """
+        centerX = self.ballData["centerX"]
+        centerY = self.ballData["centerY"]
+        radius = self.ballData["radius"]
+        return [centerX, centerY, radius]
+
+    def showBallPosition(self):
+        """
+        show and save ball data in the current frame.
+        """
+        if self.ballData["radius"] == 0:
+            # print("no ball found.")
+            print("ball postion = ", (self.ballPosition["disX"], self.ballPosition["disY"]))
+            # cv2.imshow("ball position", self.frameArray)
+        else:
+            print("ballX = ", self.ballData["centerX"])
+            print("ballY = ", self.ballData["centerY"])
+            print("ball postion = ", (self.ballPosition["disX"], self.ballPosition["disY"]))
+            print("ball direction = ", self.ballPosition["angle"] * 180 / 3.14)
+            frameArray = self.frameArray.copy()
+            cv2.circle(frameArray, (self.ballData["centerX"], self.ballData["centerY"]),
+                       self.ballData["radius"], (250, 150, 150), 2)
+            cv2.circle(frameArray, (self.ballData["centerX"], self.ballData["centerY"]),
+                       2, (50, 250, 50), 3)
+            # cv2.imshow("ball position", frameArray)
+            # cv2.waitKey(1000)
+            # cv2.destroyAllWindows()
 
 
 class StickDetection(VisualBasis):
@@ -574,6 +622,21 @@ class StickDetection(VisualBasis):
             self.boundRect = []
             self.stickAngle = 0.0  # rad
 
+    def showStickPosition(self):
+        """
+        show the stick  position in the current frame.
+        """
+        if len(self.boundRect) is 0:
+            # print("no stick detected.")
+            cv2.imshow("stick position", self.frameArray)
+        else:
+            [x, y, w, h] = self.boundRect
+            frame = self.frameArray.copy()
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+            # cv2.imshow("stick position", frame)
+            # cv2.waitKey(1000)
+            # cv2.destroyAllWindows()
+
 
 class LandMarkDetection(VisualBasis):
     """调用updateLandMarkData, 更新LandMark坐标，距离，角度"""
@@ -596,15 +659,12 @@ class LandMarkDetection(VisualBasis):
         currentCamera = "CameraTop"
         self.landmarkProxy.subscribe("landmark")
         markData = self.memoryProxy.getData("LandmarkDetected")
-        for i in xrange(3):
-            markData = self.memoryProxy.getData("LandmarkDetected")
-            if len(markData) is not 0:
-                break
         if len(markData) is 0:
             self.disX = 0
             self.disY = 0
             self.dist = 0
             self.yawAngle = 0
+            return
         wzCamera = markData[1][0][0][1]
         wyCamera = markData[1][0][0][2]
         angularSize = markData[1][0][0][3]
@@ -627,10 +687,10 @@ class LandMarkDetection(VisualBasis):
 
 if __name__ == '__main__':
     # stick_detect = StickDetection("127.0.0.1")
-    with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
-        f.write("\n")
-    '''
-    stick_detect = StickDetection("192.168.137.150")
+    # with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
+    #    f.write("\n")
+
+    stick_detect = StickDetection("192.168.137.117")
     for ii in range(20):
         s_time = time.time()
         stick_detect.updateStickData()
@@ -638,11 +698,12 @@ if __name__ == '__main__':
         with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
             f.write("all time: {:.2}s\n".format(time.time() - s_time))
         if stick_img is not None:
-            cv2.imshow("stick", stick_img)
-            cv2.waitKey(1000)
-            cv2.destroyWindow("stick")
+            stick_detect.showStickPosition()
+            # cv2.imshow("stick", stick_img)
+            # cv2.waitKey(1000)
+            # cv2.destroyWindow("stick")
     '''
-    ball_detect = RedBallDetection("192.168.137.150")
+    ball_detect = RedBallDetection("192.168.137.117")
     for ii in range(20):
         s_time = time.time()
         ball_detect.updateBallData()
@@ -650,9 +711,11 @@ if __name__ == '__main__':
         with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
             f.write("all time: {:.2}s\n".format(time.time() - s_time))
         if ball_img is not None:
-            cv2.imshow("ball", ball_img)
-            cv2.waitKey(1000)
-            cv2.destroyWindow("ball")
+            ball_detect.showBallPosition()
+            # cv2.imshow("ball", ball_img)
+            # cv2.waitKey(1000)
+            # cv2.destroyWindow("ball")
         else:
             print("no ball!")
-# 192.168.137.150
+    '''
+# 169.254.189.102
