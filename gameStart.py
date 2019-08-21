@@ -565,15 +565,19 @@ class GolfGame(ConfigureNao):
     def hitball3(self, hitspeed):
         if self.landmark_info[3] > 0:
             self.forehandToHitball(hitspeed)
+            time.sleep(3)
             self.motionProxy.moveTo(0, 0, 80 * rad, self.walkconfiguration.WalkCircleLittle_blue())
         elif self.landmark_info[3] < 0:
             self.backhandToHitball(hitspeed)
             self.motionProxy.moveTo(0, 0, -80 * rad, self.walkconfiguration.WalkCircleLittle_blue())
+            time.sleep(3)
         elif self.stickAngle > 0:
             self.forehandToHitball(hitspeed)
+            time.sleep(3)
             self.motionProxy.moveTo(0, 0, 80 * rad, self.walkconfiguration.WalkCircleLittle_blue())
         elif self.stickAngle < 0:
             self.backhandToHitball(hitspeed)
+            time.sleep(3)
             self.motionProxy.moveTo(0, 0, -80 * rad, self.walkconfiguration.WalkCircleLittle_blue())
 
     def trianglocation(self):
@@ -586,7 +590,7 @@ class GolfGame(ConfigureNao):
                 self.moveheadToFindball(pitchAngles=[20, 10, 0], yawAngles=[0, -15, -20, 15, -20])
                 self.motionProxy.moveTo(0, 0, self.ball_info[2], self.walkconfiguration.WalkCircleLittle_blue())
                 print("move angle:", self.ball_info[2])
-                yawAnglelist = [0, -100, -80, -40, 100, 80, 40]
+                yawAnglelist = [0, +40, +80, +100, -40, -80, -100]
             else:
                 yawAnglelist = [yawAnglelast + 80, yawAnglelast + 60, yawAnglelast + 20, yawAnglelast,
                                 yawAnglelast - 20,
@@ -698,7 +702,7 @@ class GolfGame(ConfigureNao):
                 self.ReceivingPole()
                 break
         self.gameTask_2WalkTask()
-        self.WalkToStick(distance=2, walktimes=4, min_stick_angle=12, max_stick_angle=17)
+        self.WalkToStick(distance=1.5, walktimes=4, min_stick_angle=12, max_stick_angle=17)
         while True:
             print("hitballtimes2", self.hitballtimes)
             isfindball = self.moveheadToFindball(pitchAngles=[20, 10, 0, -10, -20])
@@ -738,7 +742,7 @@ class GolfGame(ConfigureNao):
                 MiddleFlagTrue = 1
             elif FrontFlagTrue == 1 and MiddleFlagTrue == 1 and RearFlag == 1:
                 self.AddressingTheBall()
-                self.Batting(0.73)
+                self.Batting(0.78)
                 self.ReceivingPole()
                 break
         self.motionProxy.setMoveArmsEnabled(False, False)
@@ -752,12 +756,13 @@ class GolfGame(ConfigureNao):
         while True:
             if self.hitballtimes == 2:
                 self.motionProxy.setMoveArmsEnabled(False, False)
-                self.motionProxy.moveTo(0.70, 0, 0, self.walkconfiguration.WalkLineLittle_blue())
+                self.motionProxy.moveTo(1.25, 0, 0, self.walkconfiguration.WalkLineLittle_blue())
                 self.flag = True
             self.walkToBall3()
+            self.tts.say("walk over")
             self.trianglocation()
             if self.hitballtimes == 1:
-                self.hitball3(0.65)
+                self.hitball3(0.60)
             else:
                 self.hitball3(0.65)
             self.hitballtimes += 1
