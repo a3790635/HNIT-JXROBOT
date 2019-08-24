@@ -23,7 +23,6 @@ class VisualBasis(ConfigureNao):
     def __init__(self, robotIp, port=9559, cameraId=vd.kBottomCamera, resolution=vd.kVGA):
         """
         initilization.
-
         Args:
             IP: NAO's IP
             cameraId: bottom camera (1,default) or top camera (0).
@@ -48,7 +47,6 @@ class VisualBasis(ConfigureNao):
     def updateFrame(self, client="python_client"):
         """
         get a new image from the specified camera and save it in self._frame.
-
         Args:
             client: client name.
         Return:
@@ -84,10 +82,13 @@ class RedBallDetection(VisualBasis):
     # noinspection PyMethodMayBeStatic
     def __compute_score(self, rects):
         """计算score"""
-
-        minHSV1 = np.array([0, 43, 46])
-        maxHSV1 = np.array([10, 255, 255])
-        minHSV2 = np.array([156, 43, 46])
+        smin1 = 43
+        vmin1 = 46
+        hmax1 = 10
+        hmin2 = 156
+        minHSV1 = np.array([0, smin1, vmin1])
+        maxHSV1 = np.array([hmax1, 255, 255])
+        minHSV2 = np.array([hmin2, smin1, vmin1])
         maxHSV2 = np.array([180, 255, 255])
 
         img = self.frameArray.copy()
@@ -146,10 +147,13 @@ class RedBallDetection(VisualBasis):
         二值化：所有灰度大于或等于阀值的像素被判定为属于特定物体
         """
         HSVImg = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-        minHSV1 = np.array([0, 43, 46])
-        maxHSV1 = np.array([10, 255, 255])
-        minHSV2 = np.array([156, 43, 46])
+        smin1 = 43
+        vmin1 = 46
+        hmax1 = 10
+        hmin2 = 156
+        minHSV1 = np.array([0, smin1, vmin1])
+        maxHSV1 = np.array([hmax1, 255, 255])
+        minHSV2 = np.array([hmin2, smin1, vmin1])
         maxHSV2 = np.array([180, 255, 255])
 
         # 二值化处理
@@ -343,7 +347,6 @@ class RedBallDetection(VisualBasis):
     def getBallPosition(self):
         """
         get ball position.
-
         Return:
             distance in x axis, distance in y axis and direction related to Nao.
         """
@@ -356,7 +359,6 @@ class RedBallDetection(VisualBasis):
     def getBallInfoInImage(self):
         """
         get ball information in image.
-
         Return:
             a list of centerX, centerY and radius of the red ball.
         """
@@ -397,8 +399,12 @@ class StickDetection(VisualBasis):
         self.stickAngle = 0.0  # rad
         self.stickH = 0.47
         self.stickDistance = 0
-        self.minHSV = np.array([27, 55, 115])
-        self.maxHSV = np.array([45, 255, 255])
+        hmin = 27
+        hmax = 45
+        smin = 55
+        vmin =115
+        self.minHSV = np.array([hmin, smin, vmin])
+        self.maxHSV = np.array([hmax, 255, 255])
         self.stickImg = None
 
     # noinspection PyMethodMayBeStatic
@@ -580,7 +586,6 @@ class StickDetection(VisualBasis):
     def updateStickData(self, client="stick", isKnn=True):
         """
         更新黄杆信息
-
         """
         try:
             stime = time.time()
@@ -696,7 +701,7 @@ if __name__ == '__main__':
     # with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as f:
     #    f.write("\n")
 
-    stick_detect = StickDetection("192.168.137.117")
+    stick_detect = StickDetection("192.168.43.40")
     for ii in range(20):
         s_time = time.time()
         stick_detect.updateStickData()
@@ -709,7 +714,7 @@ if __name__ == '__main__':
             # cv2.waitKey(1000)
             # cv2.destroyWindow("stick")
     '''
-    ball_detect = RedBallDetection("192.168.137.117")
+    ball_detect = RedBallDetection("192.168.43.40")
     for ii in range(20):
         s_time = time.time()
         ball_detect.updateBallData()
