@@ -12,9 +12,10 @@ from naoqi import ALProxy
 from functools import cmp_to_key
 from datetime import datetime
 import vision_definitions as vd
+from ConfigureNao import *
 
 
-class VisualBasis(object):
+class VisualBasis(ConfigureNao):
     """
     a basic class for visual task.
     """
@@ -30,12 +31,7 @@ class VisualBasis(object):
         Return:
             none
         """
-        self.cameraProxy = ALProxy("ALVideoDevice", robotIp, port)
-        self.motionProxy = ALProxy("ALMotion", robotIp, port)
-        self.memoryProxy = ALProxy("ALMemory", robotIp, port)
-        self.landmarkProxy = ALProxy("ALLandMarkDetection", robotIp, port)
-        self.postureProxy = ALProxy("ALRobotPosture", robotIp, port)
-        self.tts = ALProxy("ALTextToSpeech", robotIp, port)
+        super(VisualBasis, self).__init__(robotIp, port)
         self.cameraId = cameraId
         self.cameraName = "CameraBottom" if self.cameraId == vd.kBottomCamera else "CameraTop"
         self.resolution = resolution
@@ -291,54 +287,58 @@ class RedBallDetection(VisualBasis):
         """
         更新红球信息
         """
-        stime = time.time()
-        self.updateFrame(client)
-        with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as fTime:
-            fTime.write("take photo times: {:.2}s\n".format(time.time() - stime))
-        cameraPosition = self.motionProxy.getPosition("CameraBottom", 2, True)
-        cameraX = cameraPosition[0]
-        cameraY = cameraPosition[1]
-        cameraHeight = cameraPosition[2]
-        img = self.frameArray.copy()
-        imageHeight, imageWidth = self.frameHeight, self.frameWidth
-        ball_rect = self.__result(isKnn)
+        try:
+            stime = time.time()
+            self.updateFrame(client)
+            with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as fTime:
+                fTime.write("take photo times: {:.2}s\n".format(time.time() - stime))
+            cameraPosition = self.motionProxy.getPosition("CameraBottom", 2, True)
+            cameraX = cameraPosition[0]
+            cameraY = cameraPosition[1]
+            cameraHeight = cameraPosition[2]
+            img = self.frameArray.copy()
+            imageHeight, imageWidth = self.frameHeight, self.frameWidth
+            ball_rect = self.__result(isKnn)
 
-        cameraYawRange = 60.97 * np.pi / 180
-        cameraPitchRange = 47.64 * np.pi / 180
+            cameraYawRange = 60.97 * np.pi / 180
+            cameraPitchRange = 47.64 * np.pi / 180
 
-        if len(ball_rect) is not 0:
-            centerX = int(ball_rect[0])
-            centerY = int(ball_rect[1])
-            radius = int(ball_rect[2])
-            cv2.rectangle(img, (centerX - radius, centerY - radius), (centerX + radius, centerY + radius), (0, 0, 255),
-                          2)
-            self.ballImg = img
+            if len(ball_rect) is not 0:
+                centerX = int(ball_rect[0])
+                centerY = int(ball_rect[1])
+                radius = int(ball_rect[2])
+                cv2.rectangle(img, (centerX - radius, centerY - radius), (centerX + radius, centerY + radius),
+                              (0, 0, 255),
+                              2)
+                self.ballImg = img
 
-            bottomCameraDirection = {"standInit": 49.2, "standUp": 39.7}
-            try:
-                cameraDirection = bottomCameraDirection[standState]
-                headPitches = self.motionProxy.getAngles("HeadPitch", True)
-                headPitch = headPitches[0]
-                headYaws = self.motionProxy.getAngles("HeadYaw", True)
-                headYaw = headYaws[0]
-                ballPitch = (centerY - imageHeight / 2) * cameraPitchRange / 480.0  # y (pitch angle)
-                ballYaw = (imageWidth / 2 - centerX) * cameraYawRange / 640.0  # x (yaw angle)
-                dPitch = (cameraHeight - self.ballRadius) / np.tan(
-                    cameraDirection / 180 * np.pi + headPitch + ballPitch)
-                dYaw = dPitch / np.cos(ballYaw)
-                ballX = dYaw * np.cos(ballYaw + headYaw) + cameraX + 0.035
-                ballY = dYaw * np.sin(ballYaw + headYaw) + cameraY
-                ballYaw = np.arctan2(ballY, ballX)
-                if standState == "standInit":
-                    ky = 42.513 * ballX ** 4 - 109.66 * ballX ** 3 + 104.2 * ballX ** 2 - 44.218 * ballX + 8.5526
-                    # ky = 12.604*ballX**4 - 37.962*ballX**3 + 43.163*ballX**2 - 22.688*ballX + 6.0526
-                    ballY = ky * ballY
+                bottomCameraDirection = {"standInit": 49.2, "standUp": 39.7}
+                try:
+                    cameraDirection = bottomCameraDirection[standState]
+                    headPitches = self.motionProxy.getAngles("HeadPitch", True)
+                    headPitch = headPitches[0]
+                    headYaws = self.motionProxy.getAngles("HeadYaw", True)
+                    headYaw = headYaws[0]
+                    ballPitch = (centerY - imageHeight / 2) * cameraPitchRange / 480.0  # y (pitch angle)
+                    ballYaw = (imageWidth / 2 - centerX) * cameraYawRange / 640.0  # x (yaw angle)
+                    dPitch = (cameraHeight - self.ballRadius) / np.tan(
+                        cameraDirection / 180 * np.pi + headPitch + ballPitch)
+                    dYaw = dPitch / np.cos(ballYaw)
+                    ballX = dYaw * np.cos(ballYaw + headYaw) + cameraX
+                    ballY = dYaw * np.sin(ballYaw + headYaw) + cameraY
                     ballYaw = np.arctan2(ballY, ballX)
+                    if standState == "standInit":
+                        ky = 42.513 * ballX ** 4 - 109.66 * ballX ** 3 + 104.2 * ballX ** 2 - 44.218 * ballX + 8.5526
+                        # ky = 12.604*ballX**4 - 37.962*ballX**3 + 43.163*ballX**2 - 22.688*ballX + 6.0526
+                        ballY = ky * ballY
+                        ballYaw = np.arctan2(ballY, ballX)
 
-                self.ballData = {"centerX": centerX, "centerY": centerY, "radius": radius}
-                self.ballPosition = {"disX": ballX, "disY": ballY, "angle": ballYaw}
-            except KeyError:
-                print("Error! unknown standState, please check the value of stand state!")
+                    self.ballData = {"centerX": centerX, "centerY": centerY, "radius": radius}
+                    self.ballPosition = {"disX": ballX, "disY": ballY, "angle": ballYaw}
+                except KeyError:
+                    print("Error! unknown standState, please check the value of stand state!")
+        except Exception, err:
+            print(err)
 
     def getBallPosition(self):
         """
@@ -383,7 +383,7 @@ class RedBallDetection(VisualBasis):
                        self.ballData["radius"], (250, 150, 150), 2)
             cv2.circle(frameArray, (self.ballData["centerX"], self.ballData["centerY"]),
                        2, (50, 250, 50), 3)
-            # cv2.imshow("ball position", frameArray)
+            cv2.imshow("ball position", frameArray)
             # cv2.waitKey(1000)
             # cv2.destroyAllWindows()
 
@@ -582,45 +582,48 @@ class StickDetection(VisualBasis):
         更新黄杆信息
 
         """
-        stime = time.time()
-        self.updateFrame(client)
-        with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as fTime:
-            fTime.write("take photo times: {:.2}s\n".format(time.time() - stime))
-        cameraPosition = self.motionProxy.getPosition("CameraBottom", 2, True)
-        cameraHeight = cameraPosition[2]
-        cameraAngles = self.motionProxy.getAngles("Head", True)
-        cameraYaw, cameraPitch = cameraAngles
-        img = self.frameArray
-        imageHeight, imageWidth, _ = img.shape
-        stick_rect = self.__result(isKnn)
-        if len(stick_rect) is not 0:
-            sx = stick_rect[0]
-            sy = stick_rect[1]
-            sw = stick_rect[2]
-            sh = stick_rect[3]
-            centerY = sy + sh / 2
-            centerX = sx + 0.1 * sh / 2
-            # 画出目标
-            cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (0, 0, 255), 2)
-            self.stickImg = img
+        try:
+            stime = time.time()
+            self.updateFrame(client)
+            with codecs.open("timeInfo.txt", 'a', encoding='utf-8') as fTime:
+                fTime.write("take photo times: {:.2}s\n".format(time.time() - stime))
+            cameraPosition = self.motionProxy.getPosition("CameraBottom", 2, True)
+            cameraHeight = cameraPosition[2]
+            cameraAngles = self.motionProxy.getAngles("Head", True)
+            cameraYaw, cameraPitch = cameraAngles
+            img = self.frameArray
+            imageHeight, imageWidth, _ = img.shape
+            stick_rect = self.__result(isKnn)
+            if len(stick_rect) is not 0:
+                sx = stick_rect[0]
+                sy = stick_rect[1]
+                sw = stick_rect[2]
+                sh = stick_rect[3]
+                centerY = sy + sh / 2
+                centerX = sx + 0.1 * sh / 2
+                # 画出目标
+                cv2.rectangle(img, (sx, sy), (sx + sw, sy + sh), (0, 0, 255), 2)
+                self.stickImg = img
 
-            cameraRangeX = 60.97 * np.pi / 180
-            cameraRangeY = 47.64 * np.pi / 180
+                cameraRangeX = 60.97 * np.pi / 180
+                cameraRangeY = 47.64 * np.pi / 180
 
-            stickAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
-            stickAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
+                stickAngleX = cameraYaw + (imageWidth / 2.0 - centerX) / imageWidth * cameraRangeX
+                stickAngleY = cameraPitch + (centerY - imageHeight / 2.0) / imageHeight * cameraRangeY
 
-            stickDistance = (cameraHeight - self.stickH / 2.0) / np.tan(stickAngleY)
-            stickDistance = self.__distance_fixing(stickDistance)
+                stickDistance = (cameraHeight - self.stickH / 2.0) / np.tan(stickAngleY)
+                stickDistance = self.__distance_fixing(stickDistance)
 
-            self.stickDistance = stickDistance
-            self.boundRect = [sx, sy, sw, sh]
-            self.stickAngle = stickAngleX  # rad
-        else:
-            print("no stick")
-            self.stickDistance = 0
-            self.boundRect = []
-            self.stickAngle = 0.0  # rad
+                self.stickDistance = stickDistance
+                self.boundRect = [sx, sy, sw, sh]
+                self.stickAngle = stickAngleX  # rad
+            else:
+                print("no stick")
+                self.stickDistance = 0
+                self.boundRect = []
+                self.stickAngle = 0.0  # rad
+        except Exception, err:
+            print(err)
 
     def showStickPosition(self):
         """
@@ -633,7 +636,7 @@ class StickDetection(VisualBasis):
             [x, y, w, h] = self.boundRect
             frame = self.frameArray.copy()
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-            # cv2.imshow("stick position", frame)
+            cv2.imshow("stick position", frame)
             # cv2.waitKey(1000)
             # cv2.destroyAllWindows()
 
@@ -656,33 +659,36 @@ class LandMarkDetection(VisualBasis):
         """
         更新LandMark信息
         """
-        currentCamera = "CameraTop"
-        self.landmarkProxy.subscribe("landmark")
-        markData = self.memoryProxy.getData("LandmarkDetected")
-        if len(markData) is 0:
-            self.disX = 0
-            self.disY = 0
-            self.dist = 0
-            self.yawAngle = 0
-            return
-        wzCamera = markData[1][0][0][1]
-        wyCamera = markData[1][0][0][2]
-        angularSize = markData[1][0][0][3]
-        distanceFromCameraToLandmark = self.landMarkSize / (2 * math.tan(angularSize / 2))
-        transform = self.motionProxy.getTransform(currentCamera, 2, True)
-        transformList = almath.vectorFloat(transform)
-        robotToCamera = almath.Transform(transformList)
-        cameraToLandmarkRotationTransform = almath.Transform_from3DRotation(0, wyCamera, wzCamera)
-        cameraToLandmarkTranslationTransform = almath.Transform(distanceFromCameraToLandmark, 0, 0)
-        robotToLandmark = robotToCamera * cameraToLandmarkRotationTransform * cameraToLandmarkTranslationTransform
-        landMarkX = robotToLandmark.r1_c4
-        landMarkY = robotToLandmark.r2_c4
-        self.landmarkProxy.unsubscribe("landmark")
-        yawAngle = math.atan2(landMarkY, landMarkX)
-        self.disX = landMarkX
-        self.disY = landMarkY
-        self.dist = distanceFromCameraToLandmark
-        self.yawAngle = yawAngle
+        try:
+            currentCamera = "CameraTop"
+            self.landmarkProxy.subscribe("landmark")
+            markData = self.memoryProxy.getData("LandmarkDetected")
+            if markData is None:
+                self.disX = 0
+                self.disY = 0
+                self.dist = 0
+                self.yawAngle = 0
+                return
+            wzCamera = markData[1][0][0][1]
+            wyCamera = markData[1][0][0][2]
+            angularSize = markData[1][0][0][3]
+            distanceFromCameraToLandmark = self.landMarkSize / (2 * math.tan(angularSize / 2))
+            transform = self.motionProxy.getTransform(currentCamera, 2, True)
+            transformList = almath.vectorFloat(transform)
+            robotToCamera = almath.Transform(transformList)
+            cameraToLandmarkRotationTransform = almath.Transform_from3DRotation(0, wyCamera, wzCamera)
+            cameraToLandmarkTranslationTransform = almath.Transform(distanceFromCameraToLandmark, 0, 0)
+            robotToLandmark = robotToCamera * cameraToLandmarkRotationTransform * cameraToLandmarkTranslationTransform
+            landMarkX = robotToLandmark.r1_c4
+            landMarkY = robotToLandmark.r2_c4
+            self.landmarkProxy.unsubscribe("landmark")
+            yawAngle = math.atan2(landMarkY, landMarkX)
+            self.disX = landMarkX
+            self.disY = landMarkY
+            self.dist = distanceFromCameraToLandmark
+            self.yawAngle = yawAngle
+        except Exception, err:
+            print(err)
 
 
 if __name__ == '__main__':
