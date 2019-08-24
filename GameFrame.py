@@ -40,20 +40,20 @@ class GolfGame(ConfigureNao):
         self.__task2_start()
         self.__task3_start()
         while True:
-            # 同时触摸FrontHead和RHand
+            # 同时触摸FrontHead和RHand,强制结束
             flagData = self.touchData()
             if flagData == [1.0, 0, 0, 1.0]:
                 print("task1 is terminate")
                 stopThread(self.t1)
                 self.__task1_start()
 
-            # 同时触摸MiddleHead和RHand
+            # 同时触摸MiddleHead和RHand,强制结束
             if flagData == [0, 1.0, 0, 1.0]:
                 print("task2 is terminate")
                 stopThread(self.t2)
                 self.__task2_start()
 
-            # 同时触摸RearHead和RHand
+            # 同时触摸RearHead和RHand,强制结束
             if flagData == [0, 0, 1.0, 1.0]:
                 print("task3 is terminate")
                 stopThread(self.t3)
@@ -62,15 +62,15 @@ class GolfGame(ConfigureNao):
             time.sleep(1)
 
     def __task1_start(self):
-        self.t1 = threading.Thread(target=countdownTask.__run1)
+        self.t1 = threading.Thread(target=self.__run1)
         self.t1.start()
 
     def __task2_start(self):
-        self.t2 = threading.Thread(target=countdownTask.__run2)
+        self.t2 = threading.Thread(target=self.__run2)
         self.t2.start()
 
     def __task3_start(self):
-        self.t3 = threading.Thread(target=countdownTask.__run3)
+        self.t3 = threading.Thread(target=self.__run3)
         self.t3.start()
 
     def __run1(self):
@@ -113,6 +113,6 @@ class GolfGame(ConfigureNao):
 
 
 if __name__ == '__main__':
-    robotIp = "192.168.137.117"
+    robotIp = "192.168.43.40"
     port = 9559
     game = GolfGame(robotIp, port)
