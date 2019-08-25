@@ -116,25 +116,7 @@ class GolfGame(ConfigureNao):
         return [FrontFlag, MiddleFlag, RearFlag, RArmFlag]
 
 
-def WalkLineBig_blue():
-    WalkLineBig_blue_parameters = [["MaxStepX", 0.08],
-                                   ["MaxStepY", 0.16],
-                                   ["MaxStepTheta", 0.524],
-                                   ["MaxStepFrequency", 1.0],
-                                   ["StepHeight", 0.040],
-                                   ["TorsoWx", 0.122],
-                                   ["TorsoWy", 0.122]
-                                   ]
-    return WalkLineBig_blue_parameters
-
-
-def move(x, y, theta):
-    motion = ALProxy("ALMotion", "192.168.137.55", 9559)
-    motion.moveTo(x, y, theta, WalkLineBig_blue())
-
-
 if __name__ == '__main__':
     robotIp = "192.168.137.55"
     port = 9559
-    # game = GolfGame(robotIp, port)
-    move(1, 0, 0.01)
+    game = GolfGame(robotIp, port)
