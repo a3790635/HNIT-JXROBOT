@@ -5,7 +5,7 @@ import inspect
 import ctypes
 from naoqi import ALProxy
 import functools
-from ConfigureNao import *
+from ConfigureNao import ConfigureNao
 
 
 def _async_raise(tid, exctype):
@@ -36,24 +36,31 @@ class GolfGame(ConfigureNao):
         self.__start()
 
     def __start(self):
+        """
+        第一次开启任务，只需要触摸机器人头部前中后即可开始。
+        之后重启任务需要，先同时触摸机器人右手背部和三个
+        任务对应的头部，关闭当前正在执行的任务，之后才可以
+        触摸机器人头部，选择任务开始。
+
+        """
         self.__task1_start()
         self.__task2_start()
         self.__task3_start()
         while True:
-            # 同时触摸FrontHead和RHand,强制结束
+            # 同时触摸FrontHead和RHand,强制结束任务线程,重新开始新线程
             flagData = self.touchData()
             if flagData == [1.0, 0, 0, 1.0]:
                 print("task1 is terminate")
                 stopThread(self.t1)
                 self.__task1_start()
 
-            # 同时触摸MiddleHead和RHand,强制结束
+            # 同时触摸MiddleHead和RHand
             if flagData == [0, 1.0, 0, 1.0]:
                 print("task2 is terminate")
                 stopThread(self.t2)
                 self.__task2_start()
 
-            # 同时触摸RearHead和RHand,强制结束
+            # 同时触摸RearHead和RHand
             if flagData == [0, 0, 1.0, 1.0]:
                 print("task3 is terminate")
                 stopThread(self.t3)
@@ -74,34 +81,31 @@ class GolfGame(ConfigureNao):
         self.t3.start()
 
     def __run1(self):
-        while True:
-            flagData = self.touchData()
-            # 触摸FrontHead开始
-            if flagData == [1.0, 0, 0, 0]:
-                # 将要执行的第一关任务放在此处
-                print("task1 is running\n")
-                # end
-            time.sleep(1)
+        flagData = self.touchData()
+        # 触摸FrontHead开始
+        if flagData == [1.0, 0, 0, 0]:
+            # 将要执行的第一关任务放在此处
+            print("task1 is running\n")
+            # end
+        time.sleep(1)
 
     def __run2(self):
-        while True:
-            flagData = self.touchData()
-            # 触摸MiddleHead开始
-            if flagData == [0, 1.0, 0, 0]:
-                # 将要执行的第二关任务放在此处
-                print("task1 is running\n")
-                # end
-            time.sleep(1)
+        flagData = self.touchData()
+        # 触摸MiddleHead开始
+        if flagData == [0, 1.0, 0, 0]:
+            # 将要执行的第二关任务放在此处
+            print("task1 is running\n")
+            # end
+        time.sleep(1)
 
     def __run3(self):
-        while True:
-            flagData = self.touchData()
-            # 触摸RearHead开始
-            if flagData == [0, 0, 1.0, 0]:
-                # 将要执行的第三关任务放在此处
-                print("task1 is running\n")
-                # end
-            time.sleep(1)
+        flagData = self.touchData()
+        # 触摸RearHead开始
+        if flagData == [0, 0, 1.0, 0]:
+            # 将要执行的第三关任务放在此处
+            print("task1 is running\n")
+            # end
+        time.sleep(1)
 
     def touchData(self):
         FrontFlag = self.memoryProxy.getData("Device/SubDeviceList/Head/Touch/Front/Sensor/Value")
@@ -112,7 +116,25 @@ class GolfGame(ConfigureNao):
         return [FrontFlag, MiddleFlag, RearFlag, RArmFlag]
 
 
+def WalkLineBig_blue():
+    WalkLineBig_blue_parameters = [["MaxStepX", 0.08],
+                                   ["MaxStepY", 0.16],
+                                   ["MaxStepTheta", 0.524],
+                                   ["MaxStepFrequency", 1.0],
+                                   ["StepHeight", 0.040],
+                                   ["TorsoWx", 0.122],
+                                   ["TorsoWy", 0.122]
+                                   ]
+    return WalkLineBig_blue_parameters
+
+
+def move(x, y, theta):
+    motion = ALProxy("ALMotion", "192.168.137.55", 9559)
+    motion.moveTo(x, y, theta, WalkLineBig_blue())
+
+
 if __name__ == '__main__':
-    robotIp = "192.168.43.40"
+    robotIp = "192.168.137.55"
     port = 9559
-    game = GolfGame(robotIp, port)
+    # game = GolfGame(robotIp, port)
+    move(1, 0, 0.01)
