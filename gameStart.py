@@ -1458,7 +1458,7 @@ def run():
 if __name__ == "__main__":
     thr = threading.Thread(target=run)
     thr.start()
-    action = GolfGame("192.168.137.117", 9559)
+    action = GolfGame("127.0.0.1", 9559)
     action.gameStart()
     # action.gameTask_2WalkTask()
     # motion = ALProxy("ALMotion", "192.168.43.39", 9559)
