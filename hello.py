@@ -40,7 +40,6 @@ class GolfGame(ConfigureNao):
         logging.info("已连接机器人 {}".format(IP))
         isRunning = False
         try:
-            pass
             while True:
                 FrontFlag = self.memoryProxy.getData("Device/SubDeviceList/Head/Touch/Front/Sensor/Value")
                 MiddleFlag = self.memoryProxy.getData("Device/SubDeviceList/Head/Touch/Middle/Sensor/Value")
