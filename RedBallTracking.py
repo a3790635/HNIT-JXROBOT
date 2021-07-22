@@ -1,3 +1,5 @@
+# coding=utf-8
+import threading
 import time
 
 from naoqi import ALProxy
@@ -9,7 +11,7 @@ redBallProxy = ALProxy("ALRedBallDetection", IP, PORT)
 camProxy = ALProxy("ALVideoDevice", IP, PORT)
 memoryProxy = ALProxy("ALMemory", IP, PORT)
 motionProxy = ALProxy("ALMotion", IP, PORT)
-camProxy.setActiveCamera(0)
+camProxy.setActiveCamera(1)
 period = 100
 redBallProxy.subscribe("Test_RedBall", period, 0.0)
 
@@ -17,7 +19,7 @@ memValue = "redBallDetected"
 
 try:
     while True:
-        time.sleep(.1)
+        time.sleep(period / 1000)
         val = memoryProxy.getData(memValue)
         if val and isinstance(val, list) and len(val) >= 2:
             timeStamp = val[0]
@@ -27,9 +29,33 @@ try:
                 print("sizeX= {} sizeY= {}".format(ballInfo[2], ballInfo[3]))
                 anglesX = ballInfo[0]
                 anglesY = ballInfo[1]
-                fractionMaxSpeed = .1
-                motionProxy.setAngles("HeadYaw", anglesX, fractionMaxSpeed)
-                motionProxy.setAngles("HeadPitch", anglesY, fractionMaxSpeed)
+                # fractionMaxSpeed = .1
+                # motionProxy.setAngles("HeadYaw", anglesX, fractionMaxSpeed)
+                # motionProxy.setAngles("HeadPitch", anglesY, fractionMaxSpeed)
+
+                previous_errorX = 0
+                integralX = 0
+                setPointX = anglesX  # 设定值
+                measuredValueX = motionProxy.getAngles("HeadYaw", True)[0]  # 反馈值
+                errorX = abs(setPointX - measuredValueX)
+                integralX = integralX + errorX
+                derivativeX = errorX - previous_errorX
+                previous_errorX = errorX
+                fractionMaxSpeedX = derivativeX / 2
+
+                previous_errorY = 0
+                integralY = 0
+                setPointY = anglesY  # 设定值
+                measuredValueY = motionProxy.getAngles("HeadPitch", True)[0]  # 反馈值
+                errorY = abs(setPointY - measuredValueY)
+                integralY = integralY + errorY
+                derivativeY = errorY - previous_errorY
+                previous_errorY = errorY
+                fractionMaxSpeedY = derivativeY / 2
+
+                motionProxy.setAngles("HeadYaw", anglesX, fractionMaxSpeedX)
+                motionProxy.setAngles("HeadPitch", anglesY, fractionMaxSpeedY)
+
             except IndexError, e:
                 print("RedBall detected, but it seems getData is invalid. ALvalue = ")
                 print(val)

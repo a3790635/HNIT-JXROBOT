@@ -2,6 +2,7 @@
 from __future__ import print_function
 
 import logging
+import threading
 import time
 
 from ConfigureNao import *
@@ -66,6 +67,69 @@ class GolfGame(ConfigureNao):
 
         except KeyboardInterrupt:
             print("退出")
+
+    def gameTask_1(self):
+        # todo...
+        # goStraight()
+        ballTracking = RedBallTracking(self.memoryProxy, self.motionProxy)
+        ballTracking.start()
+
+
+class RedBallTracking:
+    def __init__(self, memoryProxy, motionProxy):
+        self.memoryProxy = memoryProxy
+        self.motionProxy = motionProxy
+        self.period = 100
+        self.running = False
+        self.thr = threading.Thread(target=self.start)
+        self.memValue = "redBallDetected"
+
+    def start(self):
+        self.running = True
+        self.thr.start()
+
+    def stop(self):
+        self.running = False
+        self.thr.join()
+
+    def getAngles(self):
+        pass
+
+    def track(self):
+        while self.running:
+            time.sleep(self.period / 1000)
+            val = self.memoryProxy.getData(self.memValue)
+            if val and isinstance(val, list) and len(val) >= 2:
+                ballInfo = val[1]
+                try:
+                    logging.debug("centerX= {} centerY= {}".format(ballInfo[0], ballInfo[1]))
+                    logging.debug("sizeX= {} sizeY= {}".format(ballInfo[2], ballInfo[3]))
+                    anglesX = ballInfo[0]
+                    anglesY = ballInfo[1]
+
+                    previous_errorX = 0
+                    setPointX = anglesX  # 设定值
+                    measuredValueX = self.motionProxy.getAngles("HeadYaw", True)[0]  # 反馈值
+                    errorX = abs(setPointX - measuredValueX)
+                    derivativeX = errorX - previous_errorX
+                    fractionMaxSpeedX = derivativeX / 2
+
+                    previous_errorY = 0
+                    setPointY = anglesY  # 设定值
+                    measuredValueY = self.motionProxy.getAngles("HeadPitch", True)[0]  # 反馈值
+                    errorY = abs(setPointY - measuredValueY)
+                    derivativeY = errorY - previous_errorY
+                    fractionMaxSpeedY = derivativeY / 2
+
+                    self.motionProxy.setAngles("HeadYaw", anglesX, fractionMaxSpeedX)
+                    self.motionProxy.setAngles("HeadPitch", anglesY, fractionMaxSpeedY)
+
+                except IndexError, e:
+                    logging.error("RedBall detected, but it seems getData is invalid. ALvalue = ")
+                    logging.error(val)
+                    logging.error("Error msg %s" % (str(e)))
+            else:
+                logging.error("Error with getData. ALValue = %s" % (str(val)))
 
 
 if __name__ == '__main__':
