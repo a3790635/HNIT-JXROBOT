@@ -22,9 +22,11 @@ try:
         if val and isinstance(val, list) and len(val) >= 2:
             timeStamp = val[0]
             position = val[3]
+            ballInfo = val[1]
+            cX, cY = ballInfo[0], ballInfo[1]
             try:
-                print"\rX={:8<.6f}\tY={:8<.6f}\tZ={:8<.6f}\tWX={:8<.6f}\tWY={:8<.6f}\tWZ={:8<.6f}".format(
-                    position[0], position[1], position[2], position[3], position[4], position[5]),
+                print"\rCX={:8<.6f}\tCY={:8<.6f}\tX={:8<.6f}\tY={:8<.6f}\tZ={:8<.6f}\tWX={:8<.6f}\tWY={:8<.6f}\tWZ={:8<.6f}".format(
+                    cX, cY, position[0], position[1], position[2], position[3], position[4], position[5]),
             except IndexError, e:
                 print("RedBall detected, but it seems getData is invalid. ALvalue = ")
                 print(val)

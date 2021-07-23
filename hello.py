@@ -7,6 +7,7 @@ import time
 from math import *
 from ConfigureNao import *
 from confirm import isConfirm
+import vision_definitions as vd
 
 IP = "192.168.1.106"  # 机器人的IP地址
 PORT = 9559  # 机器人的端口号，默认9559
@@ -93,12 +94,10 @@ class RedBallTracking:
         self.val = []
 
     def start(self):
-        self.redBallProxy.subscribe("Test_RedBall", self.period, 0.0)
         self.running = True
         self.thr.start()
 
     def stop(self):
-        self.redBallProxy.unsubscribe("Test_RedBall", self.period, 0.0)
         self.running = False
         # self.thr.join()
 
@@ -106,7 +105,7 @@ class RedBallTracking:
         if not self.val:
             return ()
         ballInfo = self.val[1]
-        cX, cY = ballInfo
+        cX, cY = ballInfo[0], ballInfo[1]
         x, y, z, wX, wY, wZ = self.val[3]
         AnglesX = cX / cos(wX) + wZ
         AnglesY = cY * cos(wX) + wY
@@ -116,14 +115,23 @@ class RedBallTracking:
         if not self.val:
             return 0
         ballInfo = self.val[1]
-        cX, cY = ballInfo
+        cX, cY = ballInfo[0], ballInfo[1]
         x, y, z, wX, wY, wZ = self.val[3]
-        distance = (tan(cY * cos(wX) + wY) * z) / (cos(cX / cos(wX)) + wZ) - sqrt(pow(x, 2) + pow(y, 2))
+        distance = (tan(pi / 2 - wY + cY * cos(wX)) * z) / (cos(cX / cos(wX)) + wZ) - sqrt(pow(x, 2) + pow(y, 2))
+        # distance = (tan(pi / 2 - wY + cY * cos(wX)) * z) - sqrt(pow(x, 2) + pow(y, 2))
+        # distance = (tan(pi / 2 - wY) * z)
         return distance
 
+    def getCameraAngle(self):
+        if not self.val:
+            return 0
+        x, y, z, wX, wY, wZ = self.val[3]
+        return wX, wY, wZ
+
     def track(self):
+        self.redBallProxy.subscribe("Test_RedBall", self.period, 0.0)
         while self.running:
-            time.sleep(self.period / 1000)
+            time.sleep(self.period / 1000.0)
             val = self.memoryProxy.getData(self.memValue)
             self.val = val
             if val and isinstance(val, list) and len(val) >= 2:
@@ -151,12 +159,13 @@ class RedBallTracking:
                     self.motionProxy.setAngles("HeadYaw", anglesX, fractionMaxSpeedX)
                     self.motionProxy.setAngles("HeadPitch", anglesY, fractionMaxSpeedY)
 
-                except IndexError, e:
+                except IndexError, err:
                     logging.error("RedBall detected, but it seems getData is invalid. ALvalue = ")
                     logging.error(val)
-                    logging.error("Error msg %s" % (str(e)))
+                    logging.error("Error msg %s" % (str(err)))
             else:
                 logging.error("Error with getData. ALValue = %s" % (str(val)))
+        self.redBallProxy.unsubscribe("Test_RedBall")
 
 
 if __name__ == '__main__':
