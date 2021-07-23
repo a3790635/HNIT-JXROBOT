@@ -16,6 +16,7 @@ LOG_LEVEL = logging.DEBUG
 class GolfGame(ConfigureNao):
     def __init__(self, robotIP, port):
         super(GolfGame, self).__init__(robotIP, port)
+        self.memoryProxy = ALProxy("ALMemory", "192.168.1.106", 9559)
 
     def prepare(self):
         logging.debug("preparing")
@@ -36,6 +37,22 @@ class GolfGame(ConfigureNao):
         self.rest()
         exit(code)
 
+    def goStraight(self, origin):
+        self.motionProxy.move(0.1, 0, 0)
+        position = self.motionProxy.getRobotPosition(1)
+        while True:
+            new_pos = self.motionProxy.getRobotPosition(1)
+            tmp=math.sqrt((new_pos[0] - position[0])** 2 + (new_pos[1]-position[1])**2)
+            print(tmp)
+            if  tmp> 1.5:
+                break
+            else:
+                now = self.get_theta()
+                compen = compensate(origin, now)
+                compen = judge(compen)
+                self.motionProxy.move(1.0, 0, compen)
+        self.motionProxy.stopMove()
+
     def gameStart(self):
         self.tts.say("已连接")
         logging.info("已连接机器人 {}".format(IP))
@@ -54,6 +71,7 @@ class GolfGame(ConfigureNao):
                     self.tts.say("第一关")
                     logging.info("开始第一关")
                     isRunning = True
+                    self.gameTask_1()
                 elif MiddleFlag == 1:
                     self.tts.say("第二关")
                     logging.info("开始第二关")
@@ -70,9 +88,16 @@ class GolfGame(ConfigureNao):
 
     def gameTask_1(self):
         # todo...
-        # goStraight()
-        ballTracking = RedBallTracking(self.memoryProxy, self.motionProxy)
-        ballTracking.start()
+        # self.sonarProxy.subscribe("Test_InertialSensor", 200, 0.0)
+        origin = self.get_theta()
+        self.motionProxy.moveTo(0,0,1.4)
+        time.sleep(2)
+        self.goStraight(origin)  # 1.6m
+        # self.sonarProxy.unsubscribe("Test_InertialSensor")
+        # ballTracking = RedBallTracking(self.memoryProxy, self.motionProxy)
+        # ballTracking.start()
+    def get_theta(self):
+        return self.memoryProxy.getData("Device/SubDeviceList/InertialSensor/AngleZ/Sensor/Value")
 
 
 class RedBallTracking:
@@ -135,4 +160,5 @@ class RedBallTracking:
 if __name__ == '__main__':
     logging.basicConfig(level=LOG_LEVEL)
     action = GolfGame(IP, PORT)
-    action.gameStart()
+    # action.gameStart()
+    action.gameTask_1()

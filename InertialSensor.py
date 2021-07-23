@@ -14,7 +14,6 @@ sonarProxy.subscribe("Test_InertialSensor", period, 0.0)  # 订阅
 memValueX = "Device/SubDeviceList/InertialSensor/AngleX/Sensor/Value"
 memValueY = "Device/SubDeviceList/InertialSensor/AngleY/Sensor/Value"
 memValueZ = "Device/SubDeviceList/InertialSensor/AngleZ/Sensor/Value"
-
 print
 try:
     while True:
