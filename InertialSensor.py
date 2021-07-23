@@ -3,13 +3,13 @@ import time
 
 from naoqi import ALProxy
 
-IP = "192.168.1.107"
+IP = "192.168.1.106"
 PORT = 9559
 
 period = 200   # 刷新间隔 200毫秒
 memoryProxy = ALProxy("ALMemory", IP, PORT)
-sonarProxy = ALProxy("ALSonar", IP, PORT)
-sonarProxy.subscribe("Test_InertialSensor", period, 0.0)  # 订阅
+# sonarProxy = ALProxy("ALSonar", IP, PORT)
+# sonarProxy.subscribe("Test_InertialSensor", period, 0.0)  # 订阅
 
 memValueX = "Device/SubDeviceList/InertialSensor/AngleX/Sensor/Value"
 memValueY = "Device/SubDeviceList/InertialSensor/AngleY/Sensor/Value"
@@ -24,4 +24,5 @@ try:
         print "\rAngleX = {}, AngleY = {}, AngleZ = {}".format(valX, valY, valZ),
 
 finally:
-    sonarProxy.unsubscribe("Test_InertialSensor")  # 取消订阅
+    pass
+    # sonarProxy.unsubscribe("Test_InertialSensor")  # 取消订阅
