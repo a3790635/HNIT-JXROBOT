@@ -14,7 +14,6 @@ memoryProxy = ALProxy("ALMemory", IP, PORT)
 memValueX = "Device/SubDeviceList/InertialSensor/AngleX/Sensor/Value"
 memValueY = "Device/SubDeviceList/InertialSensor/AngleY/Sensor/Value"
 memValueZ = "Device/SubDeviceList/InertialSensor/AngleZ/Sensor/Value"
-
 print
 try:
     while True:
