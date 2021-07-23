@@ -14,7 +14,7 @@ import os
 import codecs
 
 # sys.path.append("/home/meringue/Softwares/pynaoqi-sdk/") #naoqi directory
-sys.path.append("./")
+# sys.path.append("./")
 import numpy as np
 import vision_definitions as vd
 import time

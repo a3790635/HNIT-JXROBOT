@@ -4,7 +4,7 @@ import time
 
 from naoqi import ALProxy
 
-IP = "192.168.1.106"
+IP = "192.168.1.107"
 PORT = 9559
 
 redBallProxy = ALProxy("ALRedBallDetection", IP, PORT)

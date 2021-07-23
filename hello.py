@@ -4,7 +4,7 @@ from __future__ import print_function
 import logging
 import threading
 import time
-
+from math import *
 from ConfigureNao import *
 from confirm import isConfirm
 
@@ -39,13 +39,13 @@ class GolfGame(ConfigureNao):
     def gameStart(self):
         self.tts.say("已连接")
         logging.info("已连接机器人 {}".format(IP))
-        isRunning = False
+        isRunning = True
         try:
-            while True:
+            while isRunning:
                 FrontFlag = self.memoryProxy.getData("Device/SubDeviceList/Head/Touch/Front/Sensor/Value")
                 MiddleFlag = self.memoryProxy.getData("Device/SubDeviceList/Head/Touch/Middle/Sensor/Value")
                 RearFlag = self.memoryProxy.getData("Device/SubDeviceList/Head/Touch/Rear/Sensor/Value")
-                if isRunning:
+                if isRunning and FrontFlag == 1:
                     self.tts.say("结束")
                     logging.info("结束")
                     isRunning = False
@@ -73,6 +73,10 @@ class GolfGame(ConfigureNao):
         # goStraight()
         ballTracking = RedBallTracking(self.memoryProxy, self.motionProxy)
         ballTracking.start()
+        while True:
+            if ballTracking.getDistance() <= .2:
+                ballTracking.stop()
+                break
 
 
 class RedBallTracking:
@@ -83,6 +87,7 @@ class RedBallTracking:
         self.running = False
         self.thr = threading.Thread(target=self.start)
         self.memValue = "redBallDetected"
+        self.val = []
 
     def start(self):
         self.running = True
@@ -90,15 +95,32 @@ class RedBallTracking:
 
     def stop(self):
         self.running = False
-        self.thr.join()
+        # self.thr.join()
 
     def getAngles(self):
-        pass
+        if not self.val:
+            return ()
+        ballInfo = self.val[1]
+        cX, cY = ballInfo
+        x, y, z, wX, wY, wZ = self.val[3]
+        AnglesX = cX / cos(wX) + wZ
+        AnglesY = cY * cos(wX) + wY
+        return AnglesX, AnglesY
+
+    def getDistance(self):
+        if not self.val:
+            return 0
+        ballInfo = self.val[1]
+        cX, cY = ballInfo
+        x, y, z, wX, wY, wZ = self.val[3]
+        distance = (tan(cY * cos(wX) + wY) * z) / (cos(cX / cos(wX)) + wZ) - sqrt(pow(x, 2) + pow(y, 2))
+        return distance
 
     def track(self):
         while self.running:
             time.sleep(self.period / 1000)
             val = self.memoryProxy.getData(self.memValue)
+            self.val = val
             if val and isinstance(val, list) and len(val) >= 2:
                 ballInfo = val[1]
                 try:
