@@ -71,29 +71,34 @@ class GolfGame(ConfigureNao):
     def gameTask_1(self):
         # todo...
         # goStraight()
-        ballTracking = RedBallTracking(self.memoryProxy, self.motionProxy)
+        ballTracking = RedBallTracking(self.memoryProxy, self.motionProxy, self.redBallProxy)
         ballTracking.start()
         while True:
             if ballTracking.getDistance() <= .2:
                 ballTracking.stop()
                 break
+            angle = ballTracking.getAngles()
+            speed = ()
 
 
 class RedBallTracking:
-    def __init__(self, memoryProxy, motionProxy):
+    def __init__(self, memoryProxy, motionProxy, redBallProxy):
+        self.redBallProxy = redBallProxy
         self.memoryProxy = memoryProxy
         self.motionProxy = motionProxy
         self.period = 100
         self.running = False
-        self.thr = threading.Thread(target=self.start)
+        self.thr = threading.Thread(target=self.track)
         self.memValue = "redBallDetected"
         self.val = []
 
     def start(self):
+        self.redBallProxy.subscribe("Test_RedBall", self.period, 0.0)
         self.running = True
         self.thr.start()
 
     def stop(self):
+        self.redBallProxy.unsubscribe("Test_RedBall", self.period, 0.0)
         self.running = False
         # self.thr.join()
 
